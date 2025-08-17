@@ -1,4 +1,11 @@
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
 #include <cuda_runtime.h>
+#include <cuda_gl_interop.h>
 #include <iostream>
 #include <cmath>
 
@@ -77,6 +84,107 @@ __global__ void integrateGeodesics(Ray* rays, int numRays, double dLambda, doubl
     }
 }
 
+// Helper vector ops for float3 (defined early so kernels can use them)
+__device__ __forceinline__ float3 f3_add(const float3& a, const float3& b){ return make_float3(a.x+b.x, a.y+b.y, a.z+b.z); }
+__device__ __forceinline__ float3 f3_scale(const float3& a, float s){ return make_float3(a.x*s, a.y*s, a.z*s); }
+
+__global__ void bhRayKernel(cudaSurfaceObject_t surface,
+                            int width, int height,
+                            float3 camPos, float3 camFwd, float3 camRight, float3 camUp,
+                            float tanHalfFov, float aspect, float rs) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= width || y >= height) return;
+
+    float u = ( ( (x + 0.5f) / width)  * 2.0f - 1.0f ); // -1..1
+    float v = ( ( (y + 0.5f) / height) * 2.0f - 1.0f );
+    // v flip so positive v is up
+    v = -v;
+
+    float3 dir = camFwd; // camFwd + scalarR*camRight + scalarU*camUp
+    float scalarR = u * tanHalfFov * aspect;
+    dir.x += scalarR * camRight.x;
+    dir.y += scalarR * camRight.y;
+    dir.z += scalarR * camRight.z;
+    float scalarU = v * tanHalfFov;
+    dir.x += scalarU * camUp.x;
+    dir.y += scalarU * camUp.y;
+    dir.z += scalarU * camUp.z;
+    // normalize dir
+    float len = rsqrtf(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
+    dir.x *= len; dir.y *= len; dir.z *= len;
+
+    // Ray-sphere intersection (black hole event horizon at origin radius rs)
+    float3 O = camPos;
+    float3 D = dir;
+    float b = O.x*D.x + O.y*D.y + O.z*D.z; // dot(O,D)
+    float c = O.x*O.x + O.y*O.y + O.z*O.z - rs*rs;
+    float disc = b*b - c; // (since |D|=1)
+    bool hit = disc >= 0.0f && (-b - sqrtf(max(disc,0.f))) > 0.0f;
+
+    // Impact parameter ~ |O x D| / |D| ; |D|=1
+    float3 crossOD = make_float3(O.y*D.z - O.z*D.y,
+                                 O.z*D.x - O.x*D.z,
+                                 O.x*D.y - O.y*D.x);
+    float impact = sqrtf(crossOD.x*crossOD.x + crossOD.y*crossOD.y + crossOD.z*crossOD.z);
+
+    // Photon ring approx around ~2.6 rs (heuristic visual, real GR differs for camera distance)
+    float ringCenter = 2.6f * rs;
+    float ringWidth  = 0.35f * rs;
+    float ringGlow = expf(- (impact - ringCenter)*(impact - ringCenter) / (2.0f * ringWidth * ringWidth));
+
+    // Background sky gradient based on direction (simple): blend of deep blue and near-black
+    float skyT = 0.5f*(dir.y + 1.0f); // 0..1 using vertical component
+    float3 low = make_float3(0.05f,0.08f,0.12f);
+    float3 high= make_float3(0.10f,0.15f,0.25f);
+    float3 skyColor = f3_add(f3_scale(low, (1.0f - skyT)), f3_scale(high, skyT));
+
+    // Ring color (warm)
+    float3 ringBase = make_float3(1.0f, 0.75f, 0.25f);
+    float3 ringColor = f3_scale(ringBase, 3.0f * ringGlow);
+
+    float3 color;
+    if (hit) {
+        color = make_float3(0.0f,0.0f,0.0f);
+    } else {
+        color = f3_add(skyColor, ringColor);
+        // tone map simple
+        color.x = color.x / (1.0f + color.x);
+        color.y = color.y / (1.0f + color.y);
+        color.z = color.z / (1.0f + color.z);
+    }
+    // clamp
+    color.x = fminf(fmaxf(color.x,0.0f),1.0f);
+    color.y = fminf(fmaxf(color.y,0.0f),1.0f);
+    color.z = fminf(fmaxf(color.z,0.0f),1.0f);
+
+    uchar4 out = make_uchar4((unsigned char)(color.x*255.0f),
+                             (unsigned char)(color.y*255.0f),
+                             (unsigned char)(color.z*255.0f),
+                             255);
+    surf2Dwrite(out, surface, x * sizeof(uchar4), y);
+}
+
+extern "C" void launchCudaRaytracer(cudaArray_t cudaArray, int width, int height,
+                                     const float camPos[3], const float camFwd[3], const float camRight[3], const float camUp[3],
+                                     float tanHalfFov, float aspect, float rs) {
+    cudaResourceDesc resDesc = {};
+    resDesc.resType = cudaResourceTypeArray;
+    resDesc.res.array.array = cudaArray;
+    cudaSurfaceObject_t surface = 0;
+    cudaCreateSurfaceObject(&surface, &resDesc);
+
+    dim3 block(16,16);
+    dim3 grid((width + block.x - 1)/block.x, (height + block.y - 1)/block.y);
+    float3 p = make_float3(camPos[0], camPos[1], camPos[2]);
+    float3 f = make_float3(camFwd[0], camFwd[1], camFwd[2]);
+    float3 r = make_float3(camRight[0], camRight[1], camRight[2]);
+    float3 u = make_float3(camUp[0], camUp[1], camUp[2]);
+    bhRayKernel<<<grid, block>>>(surface, width, height, p, f, r, u, tanHalfFov, aspect, rs);
+    cudaDestroySurfaceObject(surface);
+}
+
+#ifdef BUILD_STANDALONE_CUDA
 int main() {
     const int numRays = 10;
     double rs = 2.0 * G * 8.54e36 / (c*c); // Example mass
@@ -121,3 +229,4 @@ int main() {
     }
     return 0;
 }
+#endif // BUILD_STANDALONE_CUDA
