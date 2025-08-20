@@ -44,6 +44,7 @@ struct Camera {
     bool dragging = false;
     bool panning = false;
     bool moving = false; // For compute shader optimization
+    bool firstMouse = true; // Track first mouse movement to prevent jumps
     double lastX = 0.0, lastY = 0.0;
 
     // Calculate camera position in world space
@@ -59,16 +60,33 @@ struct Camera {
     void update() {
         // Always keep target at black hole center
         target = vec3(0.0f, 0.0f, 0.0f);
+        
+        static double lastMoveTime = 0.0;
         if(dragging | panning) {
             moving = true;
+            lastMoveTime = glfwGetTime();
         } else {
-            moving = false;
+            // Add small delay before switching to high quality to reduce snapping
+            double timeSinceMove = glfwGetTime() - lastMoveTime;
+            moving = timeSinceMove < 0.2; // Shorter delay for better visual consistency
         }
     }
 
     void processMouseMove(double x, double y) {
+        // Handle first mouse movement to prevent jumps
+        if (firstMouse || !dragging) {
+            lastX = x;
+            lastY = y;
+            firstMouse = false;
+            return;
+        }
+        
         float dx = float(x - lastX);
         float dy = float(y - lastY);
+        
+        // Clamp delta to prevent huge jumps from initialization issues
+        dx = glm::clamp(dx, -100.0f, 100.0f);
+        dy = glm::clamp(dy, -100.0f, 100.0f);
 
         if (dragging && panning) {
             // Pan: Shift + Left or Middle Mouse
@@ -91,6 +109,7 @@ struct Camera {
                 dragging = true;
                 // Disable panning so camera always orbits center
                 panning = false;
+                firstMouse = true; // Reset first mouse flag on new drag
                 glfwGetCursorPos(win, &lastX, &lastY);
             } else if (action == GLFW_RELEASE) {
                 dragging = false;
@@ -115,6 +134,7 @@ struct Camera {
             Gravity = !Gravity;
             cout << "[INFO] Gravity turned " << (Gravity ? "ON" : "OFF") << endl;
         }
+        // Note: QuasarFeatures key handling moved to after class definition
     }
 };
 Camera camera;
@@ -134,19 +154,139 @@ struct BlackHole {
         return dist2 < r_s * r_s;
     }
 };
+
+enum class FeatureProfile { STANDARD, TON618_QUASAR };
+struct QuasarFeatures {
+    FeatureProfile profile = FeatureProfile::STANDARD;
+    float eddingtonFraction = 0.1f;    // Standard Sgr A*: low activity
+    float diskTempPeak = 1e6f;         // Standard: cooler disk
+    float lensingBoost = 1.0f;         // Always physically accurate
+    bool enableMultiLayerDisk = false;
+    
+    // Performance settings
+    enum class QualityPreset { LOW, MEDIUM, HIGH, ULTRA };
+    QualityPreset quality = QualityPreset::MEDIUM;
+    float renderScale = 0.85f;      // Resolution multiplier
+    int maxRaySteps = 64000;        // Adaptive based on quality
+    bool halfResVolumetrics = true; // For jets/disk
+    
+    // Rotation and dynamics
+    float diskRotationSpeed = 0.0f; // Rotation speed multiplier
+    float diskTurbulence = 0.0f;    // Turbulence/chaos factor
+    bool enableDopplerBeaming = false; // Relativistic Doppler effects
+    
+    // New relativistic parameters
+    bool enableKerrMetric = false;  // Enable Kerr black hole effects
+    float spinParameter = 0.0f;     // Black hole spin (0.0 = Schwarzschild, 0.998 = maximum)
+    
+    // Jet parameters
+    bool enableJets = false;        // Enable relativistic jets
+    float jetOpeningAngle = 5.0f;   // Jet opening angle in degrees
+    float jetBrightness = 1.0f;     // Jet brightness multiplier
+    
+    void switchToTON618() {
+        profile = FeatureProfile::TON618_QUASAR;
+        eddingtonFraction = 0.7f;      // Active quasar: high accretion
+        diskTempPeak = 1e7f;           // Hot, bright disk
+        enableMultiLayerDisk = true;
+        diskRotationSpeed = 2.0f;      // Fast rotation like active quasar
+        diskTurbulence = 0.3f;         // Chaotic accretion patterns
+        enableDopplerBeaming = true;   // Relativistic effects
+        enableKerrMetric = true;       // Enable rotating black hole physics
+        spinParameter = 0.8f;          // High spin parameter for active quasar
+        enableJets = true;             // Enable relativistic jets
+        jetOpeningAngle = 6.0f;        // Slightly wider jets for quasar
+        jetBrightness = 2.0f;          // Brighter jets for active system
+        cout << "[INFO] Switched to TON618 Quasar: enhanced disk and jet physics!" << endl;
+    }
+    
+    void switchToStandard() {
+        profile = FeatureProfile::STANDARD;
+        eddingtonFraction = 0.1f;
+        diskTempPeak = 1e6f;
+        enableMultiLayerDisk = false;
+        diskRotationSpeed = 0.1f;      // Slow, stable rotation
+        diskTurbulence = 0.05f;        // Minimal turbulence
+        enableDopplerBeaming = false;  // No relativistic effects
+        enableKerrMetric = false;      // Classic Schwarzschild (non-rotating)
+        spinParameter = 0.0f;          // No spin
+        enableJets = false;            // No jets in standard mode
+        jetOpeningAngle = 5.0f;        // Default values
+        jetBrightness = 1.0f;          // Default values
+        cout << "[INFO] Switched to Standard Sgr A*: classic Schwarzschild black hole" << endl;
+    }
+    
+    void toggle() {
+        if (profile == FeatureProfile::STANDARD) {
+            switchToTON618();
+        } else {
+            switchToStandard();
+        }
+    }
+    
+    void setQualityLow() {
+        quality = QualityPreset::LOW;
+        renderScale = 0.70f;
+        maxRaySteps = 32000;    // Increased from 16k
+        halfResVolumetrics = true;
+        cout << "[INFO] Quality: LOW (0.7x scale, 32k steps)" << endl;
+    }
+    
+    void setQualityMedium() {
+        quality = QualityPreset::MEDIUM;
+        renderScale = 0.85f;
+        maxRaySteps = 64000;    // Increased from 32k
+        halfResVolumetrics = true;
+        cout << "[INFO] Quality: MEDIUM (0.85x scale, 64k steps)" << endl;
+    }
+    
+    void setQualityHigh() {
+        quality = QualityPreset::HIGH;
+        renderScale = 1.0f;
+        maxRaySteps = 128000;   // High quality
+        halfResVolumetrics = false;
+        cout << "[INFO] Quality: HIGH (1.0x scale, 128k steps)" << endl;
+    }
+    
+    void setQualityUltra() {
+        quality = QualityPreset::ULTRA;
+        renderScale = 1.0f;
+        maxRaySteps = 256000;   // Ultra-high quality for maximum detail
+        halfResVolumetrics = false;
+        cout << "[INFO] Quality: ULTRA (1.0x scale, 256k steps) - WARNING: Very demanding!" << endl;
+    }
+};
+
+
 BlackHole SagA(vec3(0.0f, 0.0f, 0.0f), 8.54e36); // Sagittarius A black hole
+QuasarFeatures features; // Global features instance
+
 struct ObjectData {
     vec4 posRadius; // xyz = position, w = radius
     vec4 color;     // rgb = color, a = unused
     float  mass;
     vec3 velocity = vec3(0.0f, 0.0f, 0.0f); // Initial velocity
 };
-vector<ObjectData> objects = {
-    { vec4(4e11f, 0.0f, 0.0f, 4e10f)   , vec4(1,1,0,1), 1.98892e30 },
-    { vec4(0.0f, 0.0f, 4e11f, 4e10f)   , vec4(1,0,0,1), 1.98892e30 },
-    { vec4(0.0f, 0.0f, 0.0f, SagA.r_s) , vec4(0,0,0,1), static_cast<float>(SagA.mass)  },
-    //{ vec4(6e10f, 0.0f, 0.0f, 5e10f), vec4(0,1,0,1) }
-};
+vector<ObjectData> objects;
+
+// Function to update objects based on current features
+void updateObjects() {
+    // Reset to base objects (excluding jets)
+    objects.clear();
+    
+    // Add standard objects (distant reference spheres)
+    objects.push_back({ vec4(4e11f, 0.0f, 0.0f, 4e10f), vec4(1,1,0,1), 1.98892e30 });
+    objects.push_back({ vec4(0.0f, 0.0f, 4e11f, 4e10f), vec4(1,0,0,1), 1.98892e30 });
+    
+    // Add black hole for grid curvature calculation (invisible to raytracer)
+    objects.push_back({ 
+        vec4(0.0f, 0.0f, 0.0f, 0.1f), // Very small radius so raytracer ignores it
+        vec4(0,0,0,0), // Transparent/invisible color  
+        static_cast<float>(SagA.mass) // Full mass for grid curvature
+    });
+    
+    // Jets removed - focusing on disk physics
+}
 
 struct Engine {
     GLuint gridShaderProgram;
@@ -160,6 +300,7 @@ struct Engine {
     GLuint cameraUBO = 0;
     GLuint diskUBO = 0;
     GLuint objectsUBO = 0;
+    GLuint featuresUBO = 0;
     // -- grid mess vars -- //
     GLuint gridVAO = 0;
     GLuint gridVBO = 0;
@@ -221,6 +362,11 @@ struct Engine {
             + 16 * sizeof(float); // 16 floats for mass
         glBufferData(GL_UNIFORM_BUFFER, objUBOSize, nullptr, GL_DYNAMIC_DRAW);
         glBindBufferBase(GL_UNIFORM_BUFFER, 3, objectsUBO);  // binding = 3 matches shader
+
+        glGenBuffers(1, &featuresUBO);
+        glBindBuffer(GL_UNIFORM_BUFFER, featuresUBO);
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 14, nullptr, GL_DYNAMIC_DRAW); // features data (14 parameters)
+        glBindBufferBase(GL_UNIFORM_BUFFER, 4, featuresUBO); // binding = 4 for features
 
         auto result = QuadVAO();
         this->quadVAO = result[0];
@@ -462,9 +608,13 @@ struct Engine {
         return prog;
     }
     void dispatchCompute(const Camera& cam) {
-        // determine target compute‐res
-        int cw = cam.moving ? COMPUTE_WIDTH  : 200;
-        int ch = cam.moving ? COMPUTE_HEIGHT : 150;
+        // Adaptive resolution based on quality preset
+        int baseW = int(COMPUTE_WIDTH * features.renderScale);
+        int baseH = int(COMPUTE_HEIGHT * features.renderScale);
+        
+        // Further reduce when moving for responsiveness
+        int cw = cam.moving ? int(baseW * 0.7f) : baseW;
+        int ch = cam.moving ? int(baseH * 0.7f) : baseH;
 
         // 1) reallocate the texture if needed
         glBindTexture(GL_TEXTURE_2D, texture);
@@ -482,6 +632,7 @@ struct Engine {
         uploadCameraUBO(cam);
         uploadDiskUBO();
         uploadObjectsUBO(objects);
+        uploadFeaturesUBO();
 
         // 3) bind it as image unit 0
         glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
@@ -555,6 +706,43 @@ struct Engine {
         glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(diskData), diskData);
     }
     
+    void uploadFeaturesUBO() {
+        struct FeaturesData {
+            float eddingtonFraction;
+            float diskTempPeak;
+            float lensingBoost;
+            float enableMultiLayerDisk;
+            float maxRaySteps;
+            float diskRotationSpeed;
+            float diskTurbulence;
+            float enableDopplerBeaming;
+            float enableKerrMetric;
+            float spinParameter;
+            float enableJets;
+            float jetOpeningAngle;
+            float jetBrightness;
+            float time;
+        } data;
+        
+        data.eddingtonFraction = features.eddingtonFraction;
+        data.diskTempPeak = features.diskTempPeak;
+        data.lensingBoost = features.lensingBoost;
+        data.enableMultiLayerDisk = features.enableMultiLayerDisk ? 1.0f : 0.0f;
+        data.maxRaySteps = static_cast<float>(features.maxRaySteps);
+        data.diskRotationSpeed = features.diskRotationSpeed;
+        data.diskTurbulence = features.diskTurbulence;
+        data.enableDopplerBeaming = features.enableDopplerBeaming ? 1.0f : 0.0f;
+        data.enableKerrMetric = features.enableKerrMetric ? 1.0f : 0.0f;
+        data.spinParameter = features.spinParameter;
+        data.enableJets = features.enableJets ? 1.0f : 0.0f;
+        data.jetOpeningAngle = features.jetOpeningAngle;
+        data.jetBrightness = features.jetBrightness;
+        data.time = static_cast<float>(glfwGetTime());
+        
+        glBindBuffer(GL_UNIFORM_BUFFER, featuresUBO);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(data), &data);
+    }
+    
     vector<GLuint> QuadVAO(){
         float quadVertices[] = {
             // positions   // texCoords
@@ -611,6 +799,80 @@ struct Engine {
     };
 };
 Engine engine;
+
+// Display controls help
+void showControls() {
+    cout << "\n========== BLACK HOLE SIMULATION CONTROLS ==========" << endl;
+    cout << "Mouse Controls:" << endl;
+    cout << "  Left Click + Drag    - Orbit camera around black hole" << endl;
+    cout << "  Right Click (hold)   - Enable gravity simulation" << endl;
+    cout << "  Mouse Wheel          - Zoom in/out" << endl;
+    cout << "\nSimulation Modes:" << endl;
+    cout << "  Q - Toggle between Standard (Sgr A*) and TON618 Quasar modes" << endl;
+    cout << "  G - Toggle gravity simulation for objects" << endl;
+    cout << "\nRelativistic Effects:" << endl;
+    cout << "  R - Toggle relativistic Doppler effects" << endl;
+    cout << "  K - Toggle Kerr metric (rotating black hole)" << endl;
+    cout << "  M - Toggle multi-layer accretion disk" << endl;
+    cout << "  J - Toggle relativistic jets" << endl;
+    cout << "\nQuality Settings:" << endl;
+    cout << "  1 - Low quality    (32k steps, 0.7x resolution)" << endl;
+    cout << "  2 - Medium quality (64k steps, 0.85x resolution)" << endl;
+    cout << "  3 - High quality   (128k steps, 1.0x resolution)" << endl;
+    cout << "  4 - Ultra quality  (256k steps, 1.0x resolution)" << endl;
+    cout << "\nHelp:" << endl;
+    cout << "  H - Show this help menu" << endl;
+    cout << "\nFeatures in TON618 Quasar Mode:" << endl;
+    cout << "  - Multi-layer accretion disk with temperature gradients" << endl;
+    cout << "  - Relativistic jets with synchrotron radiation" << endl;
+    cout << "  - Gravitational redshift and time dilation" << endl;
+    cout << "  - Doppler beaming and disk rotation effects" << endl;
+    cout << "  - Kerr black hole frame dragging" << endl;
+    cout << "===================================================\n" << endl;
+}
+
+// Handle QuasarFeatures key bindings
+void handleFeatureKeys(int key, int action) {
+    if (action == GLFW_PRESS) {
+        if (key == GLFW_KEY_Q) {
+            cout << "[DEBUG] Q key pressed - switching profiles..." << endl;
+            features.toggle();
+            updateObjects(); // Update objects when profile changes
+        }
+        else if (key == GLFW_KEY_1) {
+            features.setQualityLow();
+        }
+        else if (key == GLFW_KEY_2) {
+            features.setQualityMedium();
+        }
+        else if (key == GLFW_KEY_3) {
+            features.setQualityHigh();
+        }
+        else if (key == GLFW_KEY_4) {
+            features.setQualityUltra();
+        }
+        else if (key == GLFW_KEY_R) {
+            features.enableDopplerBeaming = !features.enableDopplerBeaming;
+            cout << "[INFO] Relativistic effects: " << (features.enableDopplerBeaming ? "ON" : "OFF") << endl;
+        }
+        else if (key == GLFW_KEY_K) {
+            features.enableKerrMetric = !features.enableKerrMetric;
+            cout << "[INFO] Kerr metric (rotating BH): " << (features.enableKerrMetric ? "ON" : "OFF") << endl;
+        }
+        else if (key == GLFW_KEY_M) {
+            features.enableMultiLayerDisk = !features.enableMultiLayerDisk;
+            cout << "[INFO] Multi-layer disk: " << (features.enableMultiLayerDisk ? "ON" : "OFF") << endl;
+        }
+        else if (key == GLFW_KEY_J) {
+            features.enableJets = !features.enableJets;
+            cout << "[INFO] Relativistic jets: " << (features.enableJets ? "ON" : "OFF") << endl;
+        }
+        else if (key == GLFW_KEY_H) {
+            showControls();
+        }
+    }
+}
+
 void setupCameraCallbacks(GLFWwindow* window) {
     glfwSetWindowUserPointer(window, &camera);
 
@@ -632,13 +894,21 @@ void setupCameraCallbacks(GLFWwindow* window) {
     glfwSetKeyCallback(window, [](GLFWwindow* win, int key, int scancode, int action, int mods) {
         Camera* cam = (Camera*)glfwGetWindowUserPointer(win);
         cam->processKey(key, scancode, action, mods);
+        handleFeatureKeys(key, action); // Handle QuasarFeatures keys
     });
 }
 
 
 // -- MAIN -- //
 int main() {
+    // Display controls help at startup
+    showControls();
+    
     setupCameraCallbacks(engine.window);
+    
+    // Initialize objects based on default features
+    updateObjects();
+    
     vector<unsigned char> pixels(engine.WIDTH * engine.HEIGHT * 3);
 
     auto t0 = Clock::now();
@@ -685,6 +955,9 @@ int main() {
 
 
 
+        // ---------- CAMERA UPDATE ------------- //
+        camera.update(); // Update camera state and moving flag
+        
         // ---------- GRID ------------- //
         // 2) rebuild grid mesh on CPU
         engine.generateGrid(objects);
@@ -699,7 +972,25 @@ int main() {
         engine.dispatchCompute(camera);
         engine.drawFullScreenQuad();
 
-        // 6) present to screen
+        // 6) FPS counter with performance info
+        framesCount++;
+        auto t1 = Clock::now();
+        double nowTime = chrono::duration<double>(t1.time_since_epoch()).count();
+        if (nowTime - lastPrintTime >= 2.0) { // Every 2 seconds
+            double fps = framesCount / (nowTime - lastPrintTime);
+            const char* quality = (features.quality == QuasarFeatures::QualityPreset::LOW) ? "LOW" :
+                                 (features.quality == QuasarFeatures::QualityPreset::MEDIUM) ? "MEDIUM" : "HIGH";
+            const char* profile = (features.profile == FeatureProfile::STANDARD) ? "Sgr A*" : "TON618";
+            
+            cout << "[PERF] " << fixed << setprecision(1) << fps << " FPS | " 
+                 << quality << " quality | " << profile << " profile | "
+                 << "Scale: " << features.renderScale << "x" << endl;
+            
+            framesCount = 0;
+            lastPrintTime = nowTime;
+        }
+
+        // 7) present to screen
         glfwSwapBuffers(engine.window);
         glfwPollEvents();
     }
