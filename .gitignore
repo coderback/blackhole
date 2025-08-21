@@ -1,0 +1,51 @@
+# Build directories
+build/
+cmake-build-*/
+.vs/
+
+# Visual Studio / MSBuild
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+*.suo
+*.user
+
+# Compiled Object files
+*.o
+*.obj
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.lib
+*.exp
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.ninja
+.ninja_deps
+.ninja_log
+
+# IDE files
+.idea/
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+
+# Temporary files
+*.tmp
+*.log
+*~
+
+# CUDA compiled files
+*.fatbin
+*.cubin
+*.ptx
+
+# System files
+.DS_Store
+Thumbs.db

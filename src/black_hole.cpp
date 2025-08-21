@@ -340,9 +340,9 @@ struct Engine {
         }
         cout << "OpenGL " << glGetString(GL_VERSION) << "\n";
         this->shaderProgram = CreateShaderProgram();
-        gridShaderProgram = CreateShaderProgram("grid.vert", "grid.frag");
+        gridShaderProgram = CreateShaderProgram("shaders/grid.vert", "shaders/grid.frag");
 
-        computeProgram = CreateComputeProgram("geodesic.comp");
+        computeProgram = CreateComputeProgram("shaders/geodesic.comp");
         glGenBuffers(1, &cameraUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
         glBufferData(GL_UNIFORM_BUFFER, 128, nullptr, GL_DYNAMIC_DRAW); // alloc ~128 bytes

@@ -1,8 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 project(BlackHoleSimulation)
 
-enable_language(CUDA)
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -14,36 +12,32 @@ find_package(glm CONFIG REQUIRED)
 # Common dependencies
 set(DEPS glfw GLEW::GLEW glm::glm opengl32)
 
+# Include directories
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 # Main 3D Black Hole Simulation
-add_executable(BlackHole3D black_hole.cpp)
+add_executable(BlackHole3D src/black_hole.cpp)
 target_link_libraries(BlackHole3D PRIVATE ${DEPS})
-target_include_directories(BlackHole3D PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(BlackHole3D PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-# 2D Gravitational Lensing
-add_executable(Lensing2D 2D_lensing.cpp)
+# Example programs
+add_executable(Lensing2D examples/2D_lensing.cpp)
 target_link_libraries(Lensing2D PRIVATE ${DEPS})
-target_include_directories(Lensing2D PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(Lensing2D PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-# CPU-based Geodesic Computation
-add_executable(CPUGeodesic CPU-geodesic.cpp)
+add_executable(CPUGeodesic examples/CPU-geodesic.cpp)
 target_link_libraries(CPUGeodesic PRIVATE ${DEPS})
-target_include_directories(CPUGeodesic PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(CPUGeodesic PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-# Ray Tracing Implementation
-add_executable(RayTracing ray_tracing.cpp)
+add_executable(RayTracing examples/ray_tracing.cpp)
 target_link_libraries(RayTracing PRIVATE ${DEPS})
-target_include_directories(RayTracing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-# CUDA geodesic prototype
-add_executable(GeodesicCUDA geodesic_cuda.cu)
-target_link_libraries(GeodesicCUDA PRIVATE ${DEPS})
-target_include_directories(GeodesicCUDA PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(RayTracing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # Shader files (copy to output dir)
 file(GLOB SHADERS
-        "${CMAKE_CURRENT_SOURCE_DIR}/geodesic.comp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/grid.vert"
-        "${CMAKE_CURRENT_SOURCE_DIR}/grid.frag"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/geodesic.comp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.vert"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.frag"
 )
 
 foreach(shader ${SHADERS})
@@ -67,17 +61,12 @@ foreach(shader ${SHADERS})
             ${shader}
             $<TARGET_FILE_DIR:RayTracing>
     )
-    add_custom_command(TARGET GeodesicCUDA POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${shader}
-            $<TARGET_FILE_DIR:GeodesicCUDA>
-    )
 endforeach()
 
 # Windows-specific settings
 if(WIN32)
     # Set subsystem to console to see output for all targets
-    set_target_properties(BlackHole3D Lensing2D CPUGeodesic RayTracing GeodesicCUDA PROPERTIES
+    set_target_properties(BlackHole3D Lensing2D CPUGeodesic RayTracing PROPERTIES
             WIN32_EXECUTABLE FALSE
     )
 endif()

@@ -48,19 +48,50 @@ const float SagA_rs = 1.269e10;
 const float D_LAMBDA = 1e7;
 const double ESCAPE_R = 1e30;
 
-// Boyer-Lindquist Kerr metric components
+// Proper Boyer-Lindquist Kerr metric components (dimensionless units)
+// Working in units where M = 1, so SagA_rs = 2M = 2
 float kerrDelta(float r, float a) {
-    return r*r - SagA_rs*r + a*a;
+    // Δ = r² - 2r + a² (dimensionless)
+    return r*r - 2.0*r + a*a;
 }
 
 float kerrSigma(float r, float theta, float a) {
+    // Σ = r² + a²cos²θ (dimensionless)
     float cosTheta = cos(theta);
     return r*r + a*a*cosTheta*cosTheta;
 }
 
-float kerrOmega(float r, float theta, float a) {
+// Complete metric tensor components
+float kerrG_tt(float r, float theta, float a) {
+    // g_tt = -(1 - 2r/Σ)
     float sigma = kerrSigma(r, theta, a);
-    return 2.0*a*SagA_rs*r / (sigma*sigma + 2.0*a*a*SagA_rs*r*sin(theta)*sin(theta));
+    return -(1.0 - 2.0*r/sigma);
+}
+
+float kerrG_rr(float r, float theta, float a) {
+    // g_rr = Σ/Δ
+    float sigma = kerrSigma(r, theta, a);
+    float delta = kerrDelta(r, a);
+    return sigma / (delta + 1e-6); // Add epsilon for numerical stability
+}
+
+float kerrG_thetatheta(float r, float theta, float a) {
+    // g_θθ = Σ
+    return kerrSigma(r, theta, a);
+}
+
+float kerrG_phiphi(float r, float theta, float a) {
+    // g_φφ = sin²θ[(r² + a²)Σ + 2a²r sin²θ]/Σ
+    float sigma = kerrSigma(r, theta, a);
+    float sin2Theta = sin(theta) * sin(theta);
+    return sin2Theta * ((r*r + a*a)*sigma + 2.0*a*a*r*sin2Theta) / sigma;
+}
+
+float kerrG_tphi(float r, float theta, float a) {
+    // g_tφ = -2ar sin²θ/Σ (frame dragging term!)
+    float sigma = kerrSigma(r, theta, a);
+    float sin2Theta = sin(theta) * sin(theta);
+    return -2.0*a*r*sin2Theta / sigma;
 }
 
 // Kerr ISCO (Innermost Stable Circular Orbit) calculation
@@ -77,8 +108,32 @@ float kerrISCO(float a) {
 
 // Check if point is within ergosphere
 bool inErgosphere(float r, float theta, float a) {
-    float ergosurface = SagA_rs + sqrt(SagA_rs*SagA_rs - 4.0*a*a*cos(theta)*cos(theta));
+    // r_ergo = M + sqrt(M² - a²cos²θ) in dimensionless units (M=1)
+    float cosTheta = cos(theta);
+    float ergosurface = 1.0 + sqrt(1.0 - a*a*cosTheta*cosTheta);
     return r < ergosurface;
+}
+
+// Effective potential functions for Kerr geodesics
+float kerrRadialPotential(float r, float E, float L, float Q, float a) {
+    // R(r) = [E(r² + a²) - aL]² - Δ[Q + (L - aE)²]
+    float delta = kerrDelta(r, a);
+    float term1 = E*(r*r + a*a) - a*L;
+    float term2 = Q + (L - a*E)*(L - a*E);
+    return term1*term1 - delta*term2;
+}
+
+float kerrThetaPotential(float theta, float E, float L, float Q, float a) {
+    // Θ(θ) = Q - cos²θ[a²(E² - 1) + L²/sin²θ]
+    float cosTheta = cos(theta);
+    float sinTheta = sin(theta);
+    float cos2Theta = cosTheta * cosTheta;
+    float sin2Theta = sinTheta * sinTheta;
+    
+    // Avoid division by zero at poles
+    if (abs(sinTheta) < 1e-6) return Q;
+    
+    return Q - cos2Theta * (a*a*(E*E - 1.0) + L*L/sin2Theta);
 }
 
 // Globals to store hit info
@@ -107,14 +162,13 @@ Ray initRay(vec3 pos, vec3 dir) {
     
     // Mode-dependent initialization
     if (enableKerrMetric > 0.5) {
-        // Kerr mode: Start with Schwarzschild and add minimal corrections
-        // This ensures we don't break the basic ray initialization
+        // Kerr mode: Use same initialization as Schwarzschild for stability
+        // The frame dragging effects will come from the geodesic equations
         float f = 1.0 - SagA_rs / ray.r;
         float dt_dL = sqrt((ray.dr*ray.dr)/f + ray.r*ray.r*(ray.dtheta*ray.dtheta + sin(ray.theta)*sin(ray.theta)*ray.dphi*ray.dphi));
         ray.E = f * dt_dL;
+        ray.Q = 0.0; // Simplified for stability
         
-        // Simple Carter constant - start with zero for photons (most stable)
-        ray.Q = 0.0; // For photons in equatorial orbits, Q ≈ 0
     } else {
         // Schwarzschild mode: Original initialization
         float f = 1.0 - SagA_rs / ray.r;
@@ -127,7 +181,19 @@ Ray initRay(vec3 pos, vec3 dir) {
 }
 
 bool intercept(Ray ray, float rs) {
-    return ray.r <= rs;
+    if (enableKerrMetric > 0.5) {
+        // Kerr horizon: r_+ = M + sqrt(M² - a²) in dimensionless units
+        float M = 1.0; // Working in units where M = 1
+        float a = spinParameter;
+        float r_horizon = M + sqrt(max(M*M - a*a, 0.0));
+        
+        // Scale to physical units
+        float r_horizon_phys = r_horizon * (SagA_rs / 2.0);
+        return ray.r <= r_horizon_phys;
+    } else {
+        // Schwarzschild horizon
+        return ray.r <= rs;
+    }
 }
 // Returns true on hit, captures center, radius, and base color
 bool interceptObject(Ray ray) {
@@ -166,44 +232,44 @@ void geodesicRHS(Ray ray, out vec3 d1, out vec3 d2) {
     d2.z = -2.0*dr*dphi/r - 2.0*cos(theta)/(sin(theta)) * dtheta * dphi;
 }
 
-// Kerr geodesic equations in Boyer-Lindquist coordinates
+// Simplified Kerr geodesic equations (stable version)
 void geodesicRHS_Kerr(Ray ray, out vec3 d1, out vec3 d2) {
     float r = ray.r, theta = ray.theta;
     float dr = ray.dr, dtheta = ray.dtheta, dphi = ray.dphi;
     float E = ray.E, L = ray.L;
-    float a = spinParameter * SagA_rs / 2.0;
     
-    // Start with Schwarzschild and add Kerr corrections gradually
+    // Start with Schwarzschild geodesics (known to be stable)
     float f = 1.0 - SagA_rs / r;
     float dt_dL = E / f;
     
     d1 = vec3(dr, dtheta, dphi);
     
-    // Enhanced Schwarzschild with Kerr frame-dragging corrections
-    // This approach is more numerically stable
-    
-    // Radial equation: start with Schwarzschild, add spin effects
+    // Base Schwarzschild equations
     d2.x = - (SagA_rs / (2.0 * r*r)) * f * dt_dL * dt_dL
          + (SagA_rs / (2.0 * r*r * f)) * dr * dr
          + r * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi);
     
-    // Add Kerr correction for radial motion
-    float spin_correction_r = -a * a * SagA_rs * sin(theta) * cos(theta) * dtheta * dphi / (r * r * r);
-    d2.x += spin_correction_r;
-    
-    // Polar equation: Schwarzschild base + Kerr corrections
     d2.y = -2.0*dr*dtheta/r + sin(theta)*cos(theta)*dphi*dphi;
     
-    // Add Kerr correction for polar motion
-    float spin_correction_theta = a * a * SagA_rs * sin(2.0*theta) * dphi * dphi / (4.0 * r * r * r);
-    d2.y += spin_correction_theta;
-    
-    // Azimuthal equation: frame dragging is the key Kerr effect
     d2.z = -2.0*dr*dphi/r - 2.0*cos(theta)/(sin(theta)) * dtheta * dphi;
     
-    // Add frame dragging (this is the signature of Kerr black holes)
-    float frame_dragging = 2.0 * a * SagA_rs * r * E / (r * r * r * r + a * a * cos(theta) * cos(theta));
-    d2.z += frame_dragging;
+    // Add simple frame dragging correction (the key Kerr signature)
+    if (spinParameter > 0.0) {
+        float a = spinParameter * SagA_rs / 2.0; // Physical spin parameter
+        float sin2Theta = sin(theta) * sin(theta);
+        
+        // Frame dragging: additional φ acceleration 
+        float frame_drag = 2.0 * a * SagA_rs * E / (r * r * r);
+        d2.z += frame_drag * sin2Theta;
+        
+        // Small correction to radial motion from spin-orbit coupling
+        float spin_radial = -a * a * sin(2.0*theta) * dtheta * dphi / (r * r * r);
+        d2.x += spin_radial;
+        
+        // Small correction to polar motion  
+        float spin_polar = a * a * SagA_rs * sin(2.0*theta) * dphi * dphi / (4.0 * r * r * r * r);
+        d2.y += spin_polar;
+    }
 }
 void rk4Step(inout Ray ray, float dL) {
     vec3 k1a, k1b;
