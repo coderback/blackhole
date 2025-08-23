@@ -463,9 +463,9 @@ void main() {
                 float norm_r = (r_radial - layer1_outer) / (layer2_outer - layer1_outer);
                 norm_r = clamp(norm_r, 0.0, 1.0);
                 
-                // Enhanced temperature gradient for quasar conditions
-                vec3 warmInner = vec3(1.0, 0.95, 0.8); // Warm white
-                vec3 warmOuter = vec3(0.8, 0.9, 1.0);  // Cool blue
+                // Yellow to Orange gradient for middle layer
+                vec3 warmInner = vec3(1.0, 1.0, 0.2); // Yellow
+                vec3 warmOuter = vec3(1.0, 0.6, 0.1); // Orange
                 diskColor = mix(warmInner, warmOuter, norm_r);
                 
                 // Add turbulence effects
@@ -480,9 +480,9 @@ void main() {
                 float norm_r = (r_radial - layer2_outer) / (disk_r2 - layer2_outer);
                 norm_r = clamp(norm_r, 0.0, 1.0);
                 
-                // Cooler outer regions with dust and gas
-                vec3 torusInner = vec3(1.0, 0.7, 0.4); // Orange
-                vec3 torusOuter = vec3(0.9, 0.5, 0.2); // Red-brown
+                // Orange to Red gradient for outer layer
+                vec3 torusInner = vec3(1.0, 0.6, 0.1); // Orange
+                vec3 torusOuter = vec3(0.8, 0.2, 0.0); // Dark red
                 diskColor = mix(torusInner, torusOuter, norm_r);
                 
                 // Clumpier structure in outer torus
@@ -503,8 +503,25 @@ void main() {
             
             // Simple temperature-based color for now
             if (diskTempPeak > 5e6) {
-                // QUASAR MODE: Enhanced spectrum
-                diskColor = mix(vec3(0.3, 0.7, 1.0), vec3(1.0, 1.0, 0.9), norm_r); // Blue to white
+                // QUASAR MODE: Red inner to yellow to orange to red outer
+                vec3 innerRed = vec3(1.0, 0.1, 0.0);    // Inner: Red
+                vec3 yellow = vec3(1.0, 1.0, 0.2);      // Yellow
+                vec3 orange = vec3(1.0, 0.6, 0.1);      // Orange  
+                vec3 outerRed = vec3(0.8, 0.2, 0.0);    // Outer: Darker red
+                
+                if (norm_r < 0.33) {
+                    // Inner third: Red to Yellow
+                    float t = norm_r / 0.33;
+                    diskColor = mix(innerRed, yellow, t);
+                } else if (norm_r < 0.66) {
+                    // Middle third: Yellow to Orange
+                    float t = (norm_r - 0.33) / 0.33;
+                    diskColor = mix(yellow, orange, t);
+                } else {
+                    // Outer third: Orange to Red
+                    float t = (norm_r - 0.66) / 0.34;
+                    diskColor = mix(orange, outerRed, t);
+                }
             } else {
                 // DEFAULT MODE: White-hot inner to bluish-white outer
                 diskColor = mix(vec3(0.85, 0.9, 1.0), vec3(1.0, 1.0, 1.0), norm_r);
@@ -579,43 +596,61 @@ void main() {
         color = vec4(diskColor, opacity);
 
     } else if (hitJet) {
-        // Jet rendering - similar to disk but with synchrotron physics
+        // ENERGY BEAM JETS - Focused beam appearance
         vec3 jetPos = vec3(ray.x, ray.y, ray.z);
         float jetHeight = abs(jetPos.y);
         float jetAxis_distance = length(vec2(jetPos.x, jetPos.z));
         
-        // Jet properties based on distance from black hole
+        // Create much tighter, focused beam
         float jetRadius = jetHeight * tan(radians(jetOpeningAngle));
         float radialDistance = jetAxis_distance / jetRadius; // 0 at center, 1 at edge
         
-        // Synchrotron emission - brighter at center, fading to edges
-        float synchrotron_intensity = 1.0 - smoothstep(0.0, 1.0, radialDistance);
-        synchrotron_intensity = pow(synchrotron_intensity, 2.0); // Sharper falloff
+        // BEAM CORE: Intense bright center with very sharp falloff
+        float beam_core = 1.0 - smoothstep(0.0, 0.3, radialDistance); // Core is 30% of radius
+        beam_core = pow(beam_core, 8.0); // Very sharp falloff for focused beam
         
-        // Jet color - high energy synchrotron emission
-        vec3 jetColor = vec3(0.4, 0.7, 1.0); // Blue-white synchrotron
+        // BEAM GLOW: Softer outer glow
+        float beam_glow = 1.0 - smoothstep(0.2, 1.0, radialDistance);
+        beam_glow = pow(beam_glow, 3.0) * 0.4; // Dimmer glow around core
         
-        // Enhanced emission closer to black hole
-        float proximity_boost = 1.0 / (1.0 + jetHeight / SagA_rs);
-        jetColor *= (1.0 + proximity_boost * 2.0);
+        // COMBINE: Intense core + soft glow
+        float beam_intensity = beam_core + beam_glow;
         
-        // Relativistic beaming - jets moving toward/away from camera
+        // ENERGY BEAM COLORS: Bright electric blue-white core
+        vec3 core_color = vec3(1.0, 1.0, 1.0); // Pure white center
+        vec3 glow_color = vec3(0.3, 0.8, 1.0); // Electric blue glow
+        
+        // Mix colors based on beam intensity
+        vec3 jetColor = mix(glow_color, core_color, beam_core / max(beam_intensity, 0.001));
+        
+        // ENERGY PULSING: Make it look like flowing energy
+        float energy_flow = sin(time * 8.0 - jetHeight * 0.0001) * 0.5 + 0.5;
+        energy_flow = pow(energy_flow, 2.0); // Sharper pulses
+        jetColor *= 1.0 + energy_flow * 0.5;
+        
+        // ELECTROMAGNETIC CRACKLING: High-frequency energy variations
+        float crackle = sin(time * 20.0 + jetAxis_distance * 0.01) * 0.3;
+        crackle *= cos(time * 15.0 + jetHeight * 0.0005) * 0.3;
+        jetColor *= 1.0 + crackle * beam_core; // Only crackling in the core
+        
+        // DISTANCE BRIGHTNESS: Brighter near black hole (more power)
+        float proximity_boost = 1.0 / (1.0 + jetHeight / (SagA_rs * 20.0));
+        jetColor *= 1.0 + proximity_boost * 3.0;
+        
+        // RELATIVISTIC BEAMING: Doppler shift effects
         bool northJet = (jetRegion == 1);
-        vec3 jetVelocity = northJet ? vec3(0, 0.9, 0) : vec3(0, -0.9, 0); // 90% speed of light
+        vec3 jetVelocity = northJet ? vec3(0, 0.95, 0) : vec3(0, -0.95, 0); // 95% speed of light
         vec3 viewDir = normalize(cam.camPos - jetPos);
-        float doppler = 1.0 + 0.5 * dot(jetVelocity, viewDir);
+        float doppler = 1.0 + 0.8 * dot(jetVelocity, viewDir);
         jetColor *= doppler;
         
-        // Time-based flickering (magnetic reconnection events)
-        float flicker = 1.0 + 0.3 * sin(time * 5.0 + jetHeight * 0.001) * diskTurbulence;
-        jetColor *= flicker;
+        // BEAM BRIGHTNESS: Much brighter than original
+        jetColor *= beam_intensity * jetBrightness * eddingtonFraction * 2.0;
         
-        // Apply brightness scaling
-        jetColor *= synchrotron_intensity * jetBrightness * eddingtonFraction;
-        
-        // Transparency - more transparent at edges and far from BH
-        float alpha = synchrotron_intensity * (1.0 - radialDistance) * 0.6;
-        alpha *= exp(-jetHeight / (SagA_rs * 50.0)); // Fade with distance
+        // FOCUSED TRANSPARENCY: More opaque core, transparent edges
+        float alpha = beam_intensity;
+        alpha *= exp(-jetHeight / (SagA_rs * 100.0)); // Fade with distance
+        alpha = clamp(alpha, 0.0, 0.95); // Keep some transparency for realism
         
         color = vec4(jetColor, alpha);
 
