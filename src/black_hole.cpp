@@ -185,6 +185,34 @@ struct QuasarFeatures {
     float jetOpeningAngle = 5.0f;   // Jet opening angle in degrees
     float jetBrightness = 1.0f;     // Jet brightness multiplier
     
+    // Enhanced jet parameters
+    float jetHelixPitch = 0.0f;        // Helical twist parameter (0 = no helix)
+    float jetPrecessionAngle = 0.0f;   // Precession cone half-angle (degrees)
+    float jetPrecessionPeriod = 0.0f;  // Precession period in seconds (0 = no precession)
+    float jetLorentzFactor = 1.0f;     // Bulk relativistic motion (1 = non-relativistic)
+    float jetShockSpeed = 0.0f;        // Speed of shock knots (fraction of c)
+    
+    // Enhanced disk parameters
+    float diskInnerTemp = 1e6f;        // Inner disk temperature (Kelvin)
+    float diskTempExponent = -0.75f;   // Temperature profile exponent (Shakura-Sunyaev = -3/4)
+    float diskScaleHeight = 0.01f;     // H/R ratio at reference radius
+    float diskInstabilityAmp = 0.0f;   // Amplitude of thermal instabilities
+    float diskInstabilityFreq = 0.0f;  // Frequency of thermal instabilities (Hz)
+    
+    // Magnetic field parameters
+    float magneticFieldStrength = 0.0f; // Overall B-field strength
+    bool enableMagneticField = false;   // Toggle magnetic visualization
+    float fieldTurbulence = 0.0f;       // MRI turbulence amplitude
+    
+    // Photon ring enhancement
+    int photonRingOrders = 1;           // Number of image orders to compute
+    bool enablePhotonRing = false;      // Toggle enhanced photon ring
+    
+    // QPO and variability
+    float qpoFrequency = 0.0f;          // Quasi-periodic oscillation frequency (Hz)
+    float qpoAmplitude = 0.0f;          // QPO brightness modulation amplitude
+    float diskWindStrength = 0.0f;      // Disk wind opacity effects
+    
     void switchToTON618() {
         profile = FeatureProfile::TON618_QUASAR;
         eddingtonFraction = 0.7f;      // Active quasar: high accretion
@@ -198,7 +226,36 @@ struct QuasarFeatures {
         enableJets = true;             // Enable relativistic jets
         jetOpeningAngle = 6.0f;        // Slightly wider jets for quasar
         jetBrightness = 2.0f;          // Brighter jets for active system
-        cout << "[INFO] Switched to TON618 Quasar: enhanced disk and jet physics!" << endl;
+        
+        // Enhanced jet physics for TON618
+        jetHelixPitch = 5e11f;         // Helical structure with 500 billion meter pitch
+        jetPrecessionAngle = 2.0f;     // 2 degree precession cone
+        jetPrecessionPeriod = 3600.0f; // 1 hour precession period
+        jetLorentzFactor = 15.0f;      // Bulk relativistic motion (Γ = 15)
+        jetShockSpeed = 0.8f;          // Shock knots at 80% speed of light
+        
+        // Enhanced disk physics
+        diskInnerTemp = 5e7f;          // 50 million K inner temperature
+        diskTempExponent = -0.75f;     // Standard Shakura-Sunyaev profile
+        diskScaleHeight = 0.02f;       // Thicker disk for active quasar
+        diskInstabilityAmp = 0.2f;     // Strong thermal instabilities
+        diskInstabilityFreq = 0.1f;    // 0.1 Hz fluctuations
+        
+        // Magnetic field effects
+        magneticFieldStrength = 1.0f;  // Strong magnetic fields
+        enableMagneticField = true;    // Show magnetic structure
+        fieldTurbulence = 0.4f;        // Strong MRI turbulence
+        
+        // Enhanced photon ring
+        photonRingOrders = 3;          // Show multiple image orders
+        enablePhotonRing = true;       // Enable enhanced lensing
+        
+        // QPO and variability
+        qpoFrequency = 1.0f;           // 1 Hz QPO frequency
+        qpoAmplitude = 0.15f;          // 15% brightness modulation
+        diskWindStrength = 0.1f;       // Disk wind effects
+        
+        cout << "[INFO] Switched to TON618 Quasar: full enhanced physics enabled!" << endl;
     }
     
     void switchToStandard() {
@@ -214,7 +271,32 @@ struct QuasarFeatures {
         enableJets = false;            // No jets in standard mode
         jetOpeningAngle = 5.0f;        // Default values
         jetBrightness = 1.0f;          // Default values
-        cout << "[INFO] Switched to Standard Sgr A*: classic Schwarzschild black hole" << endl;
+        
+        // Reset enhanced parameters to standard values
+        jetHelixPitch = 0.0f;          // No helical structure
+        jetPrecessionAngle = 0.0f;     // No precession
+        jetPrecessionPeriod = 0.0f;    
+        jetLorentzFactor = 1.0f;       // Non-relativistic
+        jetShockSpeed = 0.0f;          // No shock knots
+        
+        diskInnerTemp = 1e6f;          // Cooler inner disk
+        diskTempExponent = -0.75f;     // Standard profile
+        diskScaleHeight = 0.01f;       // Thin disk
+        diskInstabilityAmp = 0.0f;     // No instabilities
+        diskInstabilityFreq = 0.0f;    
+        
+        magneticFieldStrength = 0.0f;  // No magnetic fields
+        enableMagneticField = false;   
+        fieldTurbulence = 0.0f;        
+        
+        photonRingOrders = 1;          // Basic lensing only
+        enablePhotonRing = false;      
+        
+        qpoFrequency = 0.0f;           // No QPOs
+        qpoAmplitude = 0.0f;           
+        diskWindStrength = 0.0f;       
+        
+        cout << "[INFO] Switched to Standard Sgr A*: enhanced features disabled" << endl;
     }
     
     void toggle() {
@@ -362,7 +444,7 @@ struct Engine {
 
         glGenBuffers(1, &featuresUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, featuresUBO);
-        glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 14, nullptr, GL_DYNAMIC_DRAW); // features data (14 parameters)
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 33, nullptr, GL_DYNAMIC_DRAW); // features data (33 parameters)
         glBindBufferBase(GL_UNIFORM_BUFFER, 4, featuresUBO); // binding = 4 for features
 
         auto result = QuadVAO();
@@ -706,8 +788,37 @@ struct Engine {
             float jetOpeningAngle;
             float jetBrightness;
             float time;
+            
+            // Enhanced jet parameters
+            float jetHelixPitch;
+            float jetPrecessionAngle;
+            float jetPrecessionPeriod;
+            float jetLorentzFactor;
+            float jetShockSpeed;
+            
+            // Enhanced disk parameters
+            float diskInnerTemp;
+            float diskTempExponent;
+            float diskScaleHeight;
+            float diskInstabilityAmp;
+            float diskInstabilityFreq;
+            
+            // Magnetic field parameters
+            float magneticFieldStrength;
+            float enableMagneticField;
+            float fieldTurbulence;
+            
+            // Photon ring enhancement
+            float photonRingOrders;
+            float enablePhotonRing;
+            
+            // QPO and variability
+            float qpoFrequency;
+            float qpoAmplitude;
+            float diskWindStrength;
         } data;
         
+        // Original parameters
         data.eddingtonFraction = features.eddingtonFraction;
         data.diskTempPeak = features.diskTempPeak;
         data.lensingBoost = features.lensingBoost;
@@ -722,6 +833,34 @@ struct Engine {
         data.jetOpeningAngle = features.jetOpeningAngle;
         data.jetBrightness = features.jetBrightness;
         data.time = static_cast<float>(glfwGetTime());
+        
+        // Enhanced jet parameters
+        data.jetHelixPitch = features.jetHelixPitch;
+        data.jetPrecessionAngle = features.jetPrecessionAngle;
+        data.jetPrecessionPeriod = features.jetPrecessionPeriod;
+        data.jetLorentzFactor = features.jetLorentzFactor;
+        data.jetShockSpeed = features.jetShockSpeed;
+        
+        // Enhanced disk parameters
+        data.diskInnerTemp = features.diskInnerTemp;
+        data.diskTempExponent = features.diskTempExponent;
+        data.diskScaleHeight = features.diskScaleHeight;
+        data.diskInstabilityAmp = features.diskInstabilityAmp;
+        data.diskInstabilityFreq = features.diskInstabilityFreq;
+        
+        // Magnetic field parameters
+        data.magneticFieldStrength = features.magneticFieldStrength;
+        data.enableMagneticField = features.enableMagneticField ? 1.0f : 0.0f;
+        data.fieldTurbulence = features.fieldTurbulence;
+        
+        // Photon ring enhancement
+        data.photonRingOrders = static_cast<float>(features.photonRingOrders);
+        data.enablePhotonRing = features.enablePhotonRing ? 1.0f : 0.0f;
+        
+        // QPO and variability
+        data.qpoFrequency = features.qpoFrequency;
+        data.qpoAmplitude = features.qpoAmplitude;
+        data.diskWindStrength = features.diskWindStrength;
         
         glBindBuffer(GL_UNIFORM_BUFFER, featuresUBO);
         glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(data), &data);

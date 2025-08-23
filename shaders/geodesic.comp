@@ -42,6 +42,34 @@ layout(std140, binding = 4) uniform Features {
     float jetOpeningAngle;
     float jetBrightness;
     float time;
+    
+    // Enhanced jet parameters
+    float jetHelixPitch;        // Helical twist parameter
+    float jetPrecessionAngle;   // Precession cone half-angle
+    float jetPrecessionPeriod;  // Precession period in seconds
+    float jetLorentzFactor;     // Bulk relativistic motion
+    float jetShockSpeed;        // Speed of shock knots (fraction of c)
+    
+    // Enhanced disk parameters
+    float diskInnerTemp;        // Inner disk temperature (Kelvin)
+    float diskTempExponent;     // Temperature profile exponent
+    float diskScaleHeight;      // H/R ratio at reference radius
+    float diskInstabilityAmp;   // Amplitude of thermal instabilities
+    float diskInstabilityFreq;  // Frequency of thermal instabilities
+    
+    // Magnetic field parameters
+    float magneticFieldStrength; // Overall B-field strength
+    float enableMagneticField;   // Toggle magnetic visualization
+    float fieldTurbulence;       // MRI turbulence amplitude
+    
+    // Photon ring enhancement
+    float photonRingOrders;      // Number of image orders to compute
+    float enablePhotonRing;      // Toggle enhanced photon ring
+    
+    // QPO and variability
+    float qpoFrequency;          // Quasi-periodic oscillation frequency
+    float qpoAmplitude;          // QPO brightness modulation amplitude
+    float diskWindStrength;      // Disk wind opacity effects
 };
 
 const float SagA_rs = 1.269e10;
@@ -315,7 +343,141 @@ int crossesMultiLayerDisk(vec3 oldPos, vec3 newPos) {
     return 0;
 }
 
-// Detect intersection with relativistic jet regions
+// Calculate helical jet structure with precession
+vec3 getJetAxisDirection(float height, float time) {
+    // Base jet direction (along y-axis)
+    vec3 baseAxis = vec3(0.0, 1.0, 0.0);
+    
+    // Apply precession if enabled
+    if (jetPrecessionPeriod > 0.0) {
+        float precessionPhase = 2.0 * 3.14159 * time / jetPrecessionPeriod;
+        float precessionRadius = sin(radians(jetPrecessionAngle));
+        
+        // Precession creates circular motion of jet axis
+        vec3 precessionOffset = vec3(
+            precessionRadius * cos(precessionPhase),
+            0.0,
+            precessionRadius * sin(precessionPhase)
+        );
+        
+        baseAxis = normalize(baseAxis + precessionOffset);
+    }
+    
+    return baseAxis;
+}
+
+// Multi-component jet structure with realistic physics
+struct JetComponents {
+    float core;         // Ultra-relativistic spine
+    float fastSheath;   // Fast sheath layer  
+    float slowSheath;   // Slow outer sheath
+    float cocoon;       // Shocked ambient medium
+};
+
+JetComponents calculateJetComponents(vec3 pos, vec3 jetAxis, float jetRadius, float time) {
+    JetComponents comp;
+    float jetHeight = abs(pos.y);
+    vec3 radialPos = pos - jetAxis * dot(pos, jetAxis);
+    float radialDist = length(radialPos);
+    float radialNorm = radialDist / jetRadius;
+    
+    // Core: ultra-relativistic spine (Γ ~ jetLorentzFactor)
+    float coreRadius = 0.15;  // Core is 15% of total jet radius
+    comp.core = 1.0 - smoothstep(0.0, coreRadius, radialNorm);
+    comp.core = pow(comp.core, 3.0);  // Sharp falloff
+    
+    // Fast sheath: mildly relativistic (Γ ~ 3-5)
+    float fastSheathRadius = 0.5;  // Fast sheath extends to 50% of radius
+    comp.fastSheath = 1.0 - smoothstep(coreRadius, fastSheathRadius, radialNorm);
+    comp.fastSheath = pow(comp.fastSheath, 2.0);
+    
+    // Slow sheath: sub-relativistic (Γ ~ 1.5)  
+    float slowSheathRadius = 0.85; // Slow sheath extends to 85% of radius
+    comp.slowSheath = 1.0 - smoothstep(fastSheathRadius, slowSheathRadius, radialNorm);
+    
+    // Cocoon: shocked ambient medium
+    comp.cocoon = 1.0 - smoothstep(slowSheathRadius, 1.0, radialNorm);
+    comp.cocoon = pow(comp.cocoon, 0.5);  // Extended emission
+    
+    // Add helical magnetic structure
+    if (jetHelixPitch > 0.0) {
+        float helixPhase = jetHeight / jetHelixPitch + atan(radialPos.z, radialPos.x);
+        float helixModulation = 0.7 + 0.3 * cos(helixPhase) + 0.15 * cos(2.0 * helixPhase);
+        
+        // Helical structure affects sheath layers more than core
+        comp.core *= (0.9 + 0.1 * helixModulation);
+        comp.fastSheath *= helixModulation;
+        comp.slowSheath *= helixModulation;
+        comp.cocoon *= (0.8 + 0.4 * helixModulation);
+    }
+    
+    // Internal shock structure - multiple shock systems
+    if (jetShockSpeed > 0.0) {
+        float shockTravel = jetShockSpeed * 3e8 * time;
+        
+        // Primary shock system
+        float shock1Pos = mod(shockTravel, jetHeight * 2.0);
+        float shock1 = exp(-pow((jetHeight - shock1Pos) / (SagA_rs * 0.4), 2.0));
+        
+        // Secondary shock system (different velocity)
+        float shock2Pos = mod(shockTravel * 0.8, jetHeight * 2.5);
+        float shock2 = exp(-pow((jetHeight - shock2Pos) / (SagA_rs * 0.6), 2.0));
+        
+        // Tertiary shock system (reverse shocks)
+        float shock3Pos = mod(shockTravel * 0.6, jetHeight * 1.8);
+        float shock3 = exp(-pow((jetHeight - shock3Pos) / (SagA_rs * 0.3), 2.0));
+        
+        float totalShockEnhancement = 1.0 + 3.0 * (shock1 + 0.7 * shock2 + 0.5 * shock3);
+        
+        // Shocks primarily affect the core and fast sheath
+        comp.core *= totalShockEnhancement;
+        comp.fastSheath *= (1.0 + 0.6 * (totalShockEnhancement - 1.0));
+        comp.slowSheath *= (1.0 + 0.3 * (totalShockEnhancement - 1.0));
+    }
+    
+    // Reconfinement shocks at larger distances
+    float reconfinementScale = jetHeight / (SagA_rs * 50.0);
+    if (reconfinementScale > 1.0) {
+        float reconfinement = sin(reconfinementScale * 2.0) * 0.3 + 0.7;
+        comp.core *= reconfinement;
+        comp.fastSheath *= reconfinement;
+    }
+    
+    return comp;
+}
+
+// Calculate total jet intensity and color from components
+vec3 calculateJetEmission(JetComponents comp, vec3 pos, float jetHeight) {
+    // Component-specific emission colors based on physics
+    vec3 coreColor = vec3(1.0, 1.0, 1.0);        // Synchrotron from ultra-rel. electrons
+    vec3 fastSheathColor = vec3(0.8, 0.9, 1.0);  // Cooler synchrotron
+    vec3 slowSheathColor = vec3(1.0, 0.8, 0.5);  // Thermal/non-thermal mix
+    vec3 cocoonColor = vec3(1.0, 0.6, 0.3);      // Shocked ambient medium
+    
+    // Weight colors by component intensities
+    vec3 totalEmission = 
+        coreColor * comp.core * 2.0 +               // Bright core
+        fastSheathColor * comp.fastSheath * 1.2 +   // Moderate fast sheath
+        slowSheathColor * comp.slowSheath * 0.8 +   // Dimmer slow sheath  
+        cocoonColor * comp.cocoon * 0.4;            // Faint cocoon
+    
+    // Add distance-dependent cooling effects
+    float coolingFactor = 1.0 / (1.0 + jetHeight / (SagA_rs * 100.0));
+    totalEmission *= (0.4 + 0.6 * coolingFactor);
+    
+    return totalEmission;
+}
+
+// Enhanced jet intensity with multi-component structure
+float calculateJetIntensity(vec3 pos, vec3 jetAxis, float jetRadius) {
+    JetComponents comp = calculateJetComponents(pos, jetAxis, jetRadius, time);
+    vec3 emission = calculateJetEmission(comp, pos, abs(pos.y));
+    
+    // Return total intensity (brightness)
+    return (emission.r + emission.g + emission.b) / 3.0;
+}
+
+// Detect intersection with enhanced relativistic jet regions
 int crossesJetRegion(vec3 oldPos, vec3 newPos) {
     if (enableJets < 0.5) return 0;
     
@@ -324,16 +486,18 @@ int crossesJetRegion(vec3 oldPos, vec3 newPos) {
     bool inJetZone = (abs(newPos.y) > jetStartHeight);
     if (!inJetZone) return 0;
     
-    // Calculate distance from jet axis 
-    float jetAxis_distance = length(vec2(newPos.x, newPos.z));
-    
-    // Compute conical jet geometry
     float jetHeight = abs(newPos.y);
+    
+    // Get dynamic jet axis direction
+    vec3 jetAxis = getJetAxisDirection(jetHeight, time);
+    if (newPos.y < 0.0) jetAxis.y = -jetAxis.y;  // Flip for lower jet
+    
+    // Calculate distance from dynamic jet axis
+    vec3 jetAxisPos = jetAxis * jetHeight;
+    float jetAxis_distance = length(newPos - jetAxisPos);
     
     // Calculate jet radius based on opening angle
     float jetRadius = jetHeight * tan(radians(jetOpeningAngle * 0.5));
-    
-    // Enforce minimum jet radius for visibility
     float minJetRadius = SagA_rs * 0.1;
     jetRadius = max(jetRadius, minJetRadius);
     
@@ -344,6 +508,605 @@ int crossesJetRegion(vec3 oldPos, vec3 newPos) {
     }
     
     return 0;
+}
+
+// Shakura-Sunyaev disk temperature and color calculation
+vec3 calculateDiskTemperatureColor(float r_radial, float time) {
+    // Standard Shakura-Sunyaev disk model
+    // T(r) = T_in * (r/r_in)^(-3/4) for standard thin disk
+    float r_in = SagA_rs * 3.0; // Inner disk radius (ISCO approximation)
+    float temperature = diskInnerTemp * pow(r_radial / r_in, diskTempExponent);
+    
+    // Apply thermal instabilities
+    if (diskInstabilityAmp > 0.0) {
+        float instabilityPhase = time * diskInstabilityFreq + r_radial / (SagA_rs * 10.0);
+        float instabilityModulation = 1.0 + diskInstabilityAmp * (sin(instabilityPhase) + 0.5 * sin(2.0 * instabilityPhase));
+        temperature *= instabilityModulation;
+    }
+    
+    // Convert temperature to blackbody color using Wien's approximation
+    vec3 color;
+    if (temperature > 50000.0) {
+        // Very hot: blue-white
+        color = vec3(0.7, 0.8, 1.0);
+    } else if (temperature > 20000.0) {
+        // Hot: white
+        color = vec3(1.0, 1.0, 1.0);
+    } else if (temperature > 10000.0) {
+        // Warm: yellow-white
+        color = vec3(1.0, 1.0, 0.8);
+    } else if (temperature > 5000.0) {
+        // Moderate: yellow-orange
+        color = vec3(1.0, 0.8, 0.4);
+    } else if (temperature > 2000.0) {
+        // Cool: orange-red
+        color = vec3(1.0, 0.5, 0.2);
+    } else {
+        // Very cool: deep red
+        color = vec3(0.8, 0.2, 0.1);
+    }
+    
+    // Apply temperature-dependent brightness scaling
+    float brightness = pow(temperature / diskInnerTemp, 0.25);
+    return color * brightness;
+}
+
+// Calculate MRI (Magnetorotational Instability) turbulence effects
+vec3 calculateMRITurbulence(vec3 pos, float r_radial, float time) {
+    if (enableMagneticField < 0.5 || fieldTurbulence <= 0.0) {
+        return vec3(1.0); // No turbulence effects
+    }
+    
+    // MRI operates on multiple scales - model with nested turbulent cells
+    vec3 brightness = vec3(1.0);
+    vec3 colorShift = vec3(1.0);
+    
+    // Large-scale MRI modes (pressure scale height)
+    float largeModePhase = time * 2.0 + pos.x * 0.00001 + pos.z * 0.00001;
+    float largeModeAmp = sin(largeModePhase) * cos(largeModePhase * 1.7) * fieldTurbulence;
+    
+    // Medium-scale turbulent eddies 
+    float medModePhase = time * 5.0 + pos.x * 0.0001 + pos.z * 0.0001 + pos.y * 0.001;
+    float medModeAmp = sin(medModePhase) * cos(medModePhase * 2.3) * fieldTurbulence * 0.7;
+    
+    // Small-scale magnetic reconnection events
+    float smallModePhase = time * 15.0 + pos.x * 0.001 + pos.z * 0.001;
+    float smallModeAmp = sin(smallModePhase) * sin(smallModePhase * 3.1) * fieldTurbulence * 0.4;
+    
+    // Combine turbulence scales with realistic weighting
+    float totalTurbulence = largeModeAmp + medModeAmp * 0.6 + smallModeAmp * 0.3;
+    
+    // MRI creates both brightness modulation and spectral changes
+    brightness *= (1.0 + totalTurbulence * 0.5);
+    
+    // Magnetic heating creates blue-shifted emission
+    float magneticHeating = abs(totalTurbulence) * magneticFieldStrength;
+    colorShift.b *= (1.0 + magneticHeating * 0.3);  // Enhanced blue emission
+    colorShift.r *= (1.0 - magneticHeating * 0.1);  // Reduced red emission
+    
+    // MRI strength depends on disk radius (stronger at intermediate radii)
+    float mriEfficiency = 1.0 / (1.0 + pow(r_radial / (SagA_rs * 20.0), 2.0));
+    mriEfficiency *= 1.0 / (1.0 + pow(SagA_rs * 5.0 / r_radial, 4.0));
+    
+    brightness = mix(vec3(1.0), brightness, mriEfficiency);
+    colorShift = mix(vec3(1.0), colorShift, mriEfficiency);
+    
+    return brightness * colorShift;
+}
+
+// Calculate magnetic field line visualization
+vec3 calculateMagneticFieldLines(vec3 pos, float r_radial, float time) {
+    if (enableMagneticField < 0.5) return vec3(0.0);
+    
+    // Poloidal field lines threading the disk
+    float theta = atan(pos.y, r_radial);
+    float phi = atan(pos.z, pos.x);
+    
+    // Create field line pattern - dipolar + threading flux
+    float poloidalField = sin(theta * 3.0) * exp(-r_radial / (SagA_rs * 30.0));
+    float toroidalField = sin(phi * 8.0 + time * 0.5) * exp(-abs(pos.y) / (SagA_rs * 2.0));
+    
+    float fieldStrength = sqrt(poloidalField * poloidalField + toroidalField * toroidalField);
+    fieldStrength *= magneticFieldStrength;
+    
+    // Field line color - orange/yellow for magnetic field strength
+    vec3 fieldColor = vec3(1.0, 0.6, 0.2) * fieldStrength * 0.3;
+    
+    // Add field line structure only in specific regions
+    float fieldVisibility = smoothstep(0.1, 0.3, fieldStrength);
+    
+    return fieldColor * fieldVisibility;
+}
+
+// Enhanced multi-layer disk structure with physics
+vec3 calculateEnhancedDiskColor(float r_radial, int diskLayer, float time) {
+    vec3 baseColor = calculateDiskTemperatureColor(r_radial, time);
+    
+    if (enableMultiLayerDisk > 0.5) {
+        // Apply layer-specific modifications
+        if (diskLayer == 1) {
+            // Inner hot layer - enhanced temperature
+            baseColor *= 1.2;
+        } else if (diskLayer == 2) {
+            // Intermediate warm layer
+            baseColor = mix(baseColor, vec3(1.0, 0.8, 0.4), 0.3);
+            
+            // Add turbulence effects
+            float turbulence = sin(time * 1.5 + r_radial * 0.0001) * diskTurbulence;
+            baseColor *= (1.0 + turbulence * 0.4);
+        } else if (diskLayer == 3) {
+            // Outer cool layer with clumping
+            baseColor = mix(baseColor, vec3(0.8, 0.3, 0.1), 0.4);
+            
+            // Add clumping structure
+            float clumping = sin(time * 0.8 + r_radial * 0.00005) * cos(time * 1.2 + r_radial * 0.00003);
+            baseColor *= (1.0 + clumping * diskTurbulence * 0.6);
+        }
+        
+        // Additional physics effects for multi-layer structure
+        
+        // Disk scale height effects (thicker disk = more scattering)
+        float scaleHeightEffect = 1.0 + diskScaleHeight * 0.3;
+        if (diskLayer > 1) {
+            baseColor *= scaleHeightEffect;
+        }
+        
+        // Radiation pressure effects in inner regions
+        if (diskLayer == 1 && r_radial < SagA_rs * 10.0) {
+            float radiationPressure = 1.0 + eddingtonFraction * 0.5;
+            baseColor *= radiationPressure;
+        }
+    }
+    
+    return baseColor;
+}
+
+// Advanced disk instability patterns  
+vec3 calculateDiskInstabilities(vec3 pos, float r_radial, float time) {
+    vec3 instabilityEffects = vec3(1.0);
+    
+    if (diskInstabilityAmp <= 0.0) return instabilityEffects;
+    
+    // Thermal-viscous instabilities (S-curve behavior)
+    float tvInstabilityPhase = time * diskInstabilityFreq + r_radial / (SagA_rs * 15.0);
+    float tvAmplitude = sin(tvInstabilityPhase) * diskInstabilityAmp;
+    
+    // Add spiral density waves
+    float phi = atan(pos.z, pos.x);
+    float spiralPhase = 2.0 * phi - time * 0.5 + r_radial / (SagA_rs * 10.0);
+    float spiralAmplitude = sin(spiralPhase) * diskInstabilityAmp * 0.7;
+    
+    // Magnetorotational turbulence (smaller scale)
+    float mriPhase = time * diskInstabilityFreq * 8.0 + pos.x * 0.0001 + pos.z * 0.0001;
+    float mriAmplitude = sin(mriPhase) * cos(mriPhase * 1.6) * diskInstabilityAmp * 0.5;
+    
+    // Combine instabilities
+    float totalInstability = tvAmplitude + spiralAmplitude + mriAmplitude;
+    
+    // Apply to brightness and color
+    instabilityEffects *= (1.0 + totalInstability);
+    
+    // Instabilities can cause local heating -> bluer colors
+    if (totalInstability > 0.0) {
+        instabilityEffects.b *= (1.0 + totalInstability * 0.3);
+        instabilityEffects.r *= (1.0 - totalInstability * 0.1);
+    }
+    
+    return instabilityEffects;
+}
+
+// Disk wind dynamics and opacity effects
+vec3 calculateDiskWindEffects(vec3 pos, float r_radial, vec3 rayDir, float time) {
+    if (diskWindStrength <= 0.0) return vec3(1.0);
+    
+    // Disk winds are stronger in inner regions and at higher latitudes
+    float windStrength = diskWindStrength / (1.0 + pow(r_radial / (SagA_rs * 8.0), 2.0));
+    float latitudeEffect = abs(pos.y) / sqrt(pos.x*pos.x + pos.z*pos.z + pos.y*pos.y);
+    windStrength *= (0.3 + 0.7 * latitudeEffect);
+    
+    // Wind creates absorption along the line of sight
+    vec3 windEffects = vec3(1.0);
+    
+    // Winds preferentially absorb shorter wavelengths (blue)
+    windEffects.b *= (1.0 - windStrength * 0.4);
+    windEffects.g *= (1.0 - windStrength * 0.2);
+    windEffects.r *= (1.0 - windStrength * 0.1);
+    
+    // Add scattering effects
+    float scatteringPhase = time * 2.0 + dot(pos, rayDir) * 0.0001;
+    float scattering = sin(scatteringPhase) * windStrength * 0.3;
+    windEffects *= (1.0 + scattering);
+    
+    return windEffects;
+}
+
+// Calculate Iron K-alpha line emission and relativistic broadening
+vec3 calculateIronKAlphaLine(vec3 pos, float r_radial, vec3 viewDir, float time) {
+    // Iron K-alpha line at 6.4 keV (rest frame)
+    // Only significant in inner disk regions where iron can be ionized
+    if (r_radial > SagA_rs * 20.0) return vec3(0.0);
+    
+    float ironAbundance = 1.0 / (1.0 + pow(r_radial / (SagA_rs * 6.0), 2.0));
+    if (ironAbundance < 0.1) return vec3(0.0);
+    
+    // Calculate Keplerian velocity for Doppler shift
+    float kepler_v = sqrt(SagA_rs * 1.5e8 / r_radial);
+    float beta = kepler_v / 3e8;
+    
+    // Get azimuthal velocity direction
+    vec3 radialVec = normalize(vec3(pos.x, 0.0, pos.z));
+    vec3 velocityDir = vec3(-radialVec.z, 0.0, radialVec.x); // Perpendicular to radial
+    
+    // Calculate relativistic Doppler shift
+    float cosTheta = dot(velocityDir, viewDir);
+    float dopplerFactor = sqrt((1.0 + beta * cosTheta) / (1.0 - beta * cosTheta));
+    
+    // Iron line appears as orange-red emission (6.4 keV -> visible approximation)
+    vec3 ironLineColor = vec3(1.0, 0.3, 0.1);
+    
+    // Line strength depends on iron abundance and viewing angle
+    float lineStrength = ironAbundance * (1.0 + abs(cosTheta) * 0.5);
+    
+    // Apply gravitational redshift
+    float gravRedshift = sqrt(1.0 - SagA_rs / r_radial);
+    float redshiftFactor = 1.0 / gravRedshift;
+    
+    // Combine Doppler and gravitational effects
+    float totalShift = dopplerFactor * redshiftFactor;
+    
+    // Apply wavelength shift to color (simplified)
+    ironLineColor.r *= (1.0 + (totalShift - 1.0) * 0.3);
+    ironLineColor.g *= (1.0 - (totalShift - 1.0) * 0.2);
+    ironLineColor.b *= (1.0 - (totalShift - 1.0) * 0.5);
+    
+    // Line emission with relativistic broadening
+    return ironLineColor * lineStrength * 0.15; // Scale factor for visibility
+}
+
+// Enhanced photon ring calculation with multiple image orders
+struct PhotonRingData {
+    vec3 color;
+    float intensity;
+    int imageOrder;
+    float delay;
+};
+
+PhotonRingData calculatePhotonRing(Ray ray, float time) {
+    PhotonRingData ring;
+    ring.color = vec3(0.0);
+    ring.intensity = 0.0;
+    ring.imageOrder = 0;
+    ring.delay = 0.0;
+    
+    if (enablePhotonRing < 0.5) return ring;
+    
+    // Photon sphere radius for Schwarzschild: r = 3M (1.5 * rs)
+    float photonSphereRadius = SagA_rs * 1.5;
+    
+    // For Kerr metric, photon sphere depends on spin and inclination
+    if (enableKerrMetric > 0.5) {
+        float a = spinParameter;
+        // Simplified photon sphere calculation for Kerr
+        photonSphereRadius = SagA_rs * (1.0 + sqrt(1.0 - a*a/9.0));
+    }
+    
+    float r = ray.r;
+    float dr = ray.dr;
+    
+    // Check if ray approaches photon sphere
+    float distToPhotonSphere = abs(r - photonSphereRadius);
+    
+    if (distToPhotonSphere < SagA_rs * 0.3) {
+        // Calculate how many times photon has orbited
+        float orbitalPhase = ray.phi + time * 0.01;
+        int numOrbits = int(abs(orbitalPhase) / (2.0 * 3.14159));
+        ring.imageOrder = min(numOrbits, int(photonRingOrders));
+        
+        if (ring.imageOrder > 0) {
+            // Ring brightness decreases exponentially with order
+            ring.intensity = exp(-float(ring.imageOrder) * 1.5);
+            
+            // Ring colors shift based on gravitational effects
+            float gravShift = sqrt(1.0 - SagA_rs / r);
+            
+            // Higher order rings are more redshifted
+            vec3 baseRingColor = vec3(1.0, 0.8, 0.6);
+            float orderRedshift = 1.0 / (1.0 + float(ring.imageOrder) * 0.3);
+            
+            ring.color = baseRingColor * gravShift * orderRedshift * ring.intensity;
+            
+            // Time delay increases with orbit number
+            ring.delay = float(ring.imageOrder) * 2.0 * 3.14159 * photonSphereRadius / 3e8;
+            
+            // Add lensing magnification
+            float magnification = 1.0 + 2.0 / (1.0 + distToPhotonSphere / (SagA_rs * 0.1));
+            ring.intensity *= magnification;
+            
+            // Apply Doppler beaming for spinning black hole
+            if (enableKerrMetric > 0.5) {
+                float frameDs = spinParameter * SagA_rs / (2.0 * r);
+                float dopplerBoost = 1.0 + frameDs * cos(ray.phi);
+                ring.intensity *= pow(dopplerBoost, 3.0);
+                ring.color *= pow(dopplerBoost, 0.2);
+            }
+        }
+    }
+    
+    return ring;
+}
+
+// Advanced gravitational lensing with caustics
+vec3 calculateLensingCaustics(vec3 pos, vec3 rayDir, float time) {
+    vec3 causticColor = vec3(0.0);
+    
+    float r = length(pos);
+    
+    // Critical curves occur at specific impact parameters
+    float impactParameter = length(cross(pos, rayDir));
+    
+    // Einstein ring radius (simplified)
+    float einsteinRadius = SagA_rs * sqrt(2.0);
+    
+    // Check if near critical curve
+    float causticProximity = abs(impactParameter - einsteinRadius) / (SagA_rs * 0.1);
+    
+    if (causticProximity < 1.0) {
+        // Caustic intensity diverges near critical curves
+        float causticIntensity = 1.0 / (causticProximity + 0.01);
+        causticIntensity = min(causticIntensity, 10.0);
+        
+        // Caustics produce characteristic patterns
+        float pattern = sin(impactParameter / (SagA_rs * 0.05) + time * 0.5) * 
+                       cos(impactParameter / (SagA_rs * 0.03) + time * 0.3);
+        
+        // Caustic color depends on wavelength-dependent lensing
+        causticColor.r = causticIntensity * (0.8 + 0.2 * pattern);
+        causticColor.g = causticIntensity * (0.6 + 0.4 * pattern);  
+        causticColor.b = causticIntensity * (0.9 + 0.1 * pattern);
+        
+        causticColor *= 0.1; // Scale for visibility
+    }
+    
+    return causticColor;
+}
+
+// Synchrotron emission with proper power-law spectrum
+vec3 calculateSynchrotronEmission(vec3 pos, float magneticField, float electronDensity, float time) {
+    if (magneticField <= 0.0 || electronDensity <= 0.0) return vec3(0.0);
+    
+    float r = length(pos);
+    
+    // Synchrotron frequency depends on magnetic field and electron energy
+    float gyroFreq = 1.759e11 * magneticField; // Hz
+    float criticalFreq = gyroFreq * electronDensity;
+    
+    // Power-law spectrum: F(ν) ∝ ν^(-α), typically α ≈ 0.7
+    float spectralIndex = 0.7;
+    
+    // Map to visible spectrum (very simplified)
+    float redFreq = 4.3e14;   // Red light frequency
+    float greenFreq = 5.4e14; // Green light frequency  
+    float blueFreq = 6.7e14;  // Blue light frequency
+    
+    vec3 synchrotronColor;
+    synchrotronColor.r = pow(redFreq / criticalFreq, -spectralIndex);
+    synchrotronColor.g = pow(greenFreq / criticalFreq, -spectralIndex);
+    synchrotronColor.b = pow(blueFreq / criticalFreq, -spectralIndex);
+    
+    // Normalize and scale
+    float maxComponent = max(max(synchrotronColor.r, synchrotronColor.g), synchrotronColor.b);
+    if (maxComponent > 0.0) {
+        synchrotronColor /= maxComponent;
+        synchrotronColor *= magneticField * electronDensity * 0.1;
+    }
+    
+    // Add temporal variability from magnetic reconnection
+    float variability = sin(time * 5.0 + r * 0.0001) * 0.3 + 0.7;
+    synchrotronColor *= variability;
+    
+    return synchrotronColor;
+}
+
+// Polarization effects and Faraday rotation
+struct PolarizationData {
+    vec3 color;
+    float polarizationFraction;
+    float rotationAngle;
+};
+
+PolarizationData calculatePolarization(vec3 pos, vec3 magneticField, vec3 rayDir, float time) {
+    PolarizationData pol;
+    pol.color = vec3(1.0);
+    pol.polarizationFraction = 0.0;
+    pol.rotationAngle = 0.0;
+    
+    float r = length(pos);
+    float fieldStrength = length(magneticField);
+    
+    if (fieldStrength > 0.01) {
+        // Synchrotron radiation is naturally polarized
+        float intrinsicPolarization = 0.7; // Typical for synchrotron
+        
+        // Faraday rotation through magnetized plasma
+        float electronDensity = eddingtonFraction / (1.0 + pow(r / (SagA_rs * 10.0), 2.0));
+        float rotationMeasure = 8.1e5 * electronDensity * fieldStrength; // rad/m^2
+        
+        // Wavelength-dependent rotation (simplified)
+        float lambda_r = 650e-9; // Red wavelength
+        float lambda_g = 550e-9; // Green wavelength  
+        float lambda_b = 450e-9; // Blue wavelength
+        
+        float rot_r = rotationMeasure * lambda_r * lambda_r;
+        float rot_g = rotationMeasure * lambda_g * lambda_g;
+        float rot_b = rotationMeasure * lambda_b * lambda_b;
+        
+        // Apply rotation to Stokes parameters (simplified as color modification)
+        pol.color.r *= (1.0 + 0.3 * cos(rot_r + time * 0.1));
+        pol.color.g *= (1.0 + 0.3 * cos(rot_g + time * 0.1));
+        pol.color.b *= (1.0 + 0.3 * cos(rot_b + time * 0.1));
+        
+        pol.polarizationFraction = intrinsicPolarization * exp(-rotationMeasure * 1e-6);
+        pol.rotationAngle = rot_g; // Use green as reference
+    }
+    
+    return pol;
+}
+
+// Time-dependent accretion rate variations (quasar breathing)
+float calculateAccretionRateVariation(float time) {
+    // Multiple timescale variations
+    
+    // Long-term secular evolution (years to decades)
+    float secular = sin(time * 1e-8) * 0.3 + 0.7; // Very slow variation
+    
+    // Intermediate thermal timescale (days to months)  
+    float thermal = sin(time * 0.01) * cos(time * 0.007) * 0.4 + 0.6;
+    
+    // Short-term viscous fluctuations (hours)
+    float viscous = sin(time * 0.5) * cos(time * 0.3) * 0.2 + 0.8;
+    
+    // Very rapid turbulent fluctuations (minutes)
+    float turbulent = sin(time * 5.0) * cos(time * 7.3) * 0.1 + 0.9;
+    
+    // Combine all timescales
+    return secular * thermal * viscous * turbulent;
+}
+
+// Tidal disruption event dynamics
+vec3 calculateTidalDisruption(vec3 pos, float time, float eventPhase) {
+    vec3 tideColor = vec3(0.0);
+    
+    // TDE only active during specific phase
+    if (eventPhase <= 0.0 || eventPhase >= 1.0) return tideColor;
+    
+    float r = length(pos);
+    
+    // TDE creates temporary enhanced accretion
+    float tideRadius = SagA_rs * 20.0; // Tidal disruption radius
+    
+    if (r < tideRadius) {
+        // TDE light curve: rapid rise, power-law decay
+        float lightCurve;
+        if (eventPhase < 0.1) {
+            // Rapid rise phase
+            lightCurve = pow(eventPhase / 0.1, 3.0);
+        } else {
+            // Power-law decay t^(-5/3)
+            lightCurve = pow((eventPhase - 0.1) / 0.9, -5.0/3.0);
+        }
+        
+        // TDE creates distinctive spectrum - bluer than normal disk
+        float temperature = 3e4 * lightCurve; // 30,000 K at peak
+        
+        // Blackbody color approximation
+        if (temperature > 20000.0) {
+            tideColor = vec3(0.6, 0.8, 1.0); // Hot and blue
+        } else if (temperature > 10000.0) {
+            tideColor = vec3(0.9, 0.9, 1.0); // Warm white
+        } else {
+            tideColor = vec3(1.0, 0.8, 0.6); // Cooler yellow
+        }
+        
+        tideColor *= lightCurve * 2.0; // Brightness scaling
+        
+        // Add characteristic TDE flickering
+        float flicker = sin(time * 2.0 + r * 0.0001) * 0.3 + 0.7;
+        tideColor *= flicker;
+        
+        // Radial falloff
+        tideColor *= exp(-r / tideRadius);
+    }
+    
+    return tideColor;
+}
+
+// Multi-wavelength emission modeling
+struct MultiWavelengthEmission {
+    vec3 radio;      // Radio synchrotron
+    vec3 optical;    // Optical/UV thermal + synchrotron  
+    vec3 xray;       // X-ray inverse Compton + thermal
+    vec3 gamma;      // Gamma-ray from highest energy processes
+};
+
+MultiWavelengthEmission calculateMultiWavelengthEmission(vec3 pos, float magneticField, float electronDensity, float temperature) {
+    MultiWavelengthEmission emission;
+    
+    float r = length(pos);
+    
+    // Radio: synchrotron emission from lower energy electrons
+    emission.radio = calculateSynchrotronEmission(pos, magneticField, electronDensity * 0.1, time);
+    emission.radio *= 0.3; // Typically fainter in visible
+    
+    // Optical: thermal emission + synchrotron
+    vec3 thermal = calculateDiskTemperatureColor(r, time);
+    vec3 synchrotron = calculateSynchrotronEmission(pos, magneticField, electronDensity, time);
+    emission.optical = thermal + synchrotron * 0.5;
+    
+    // X-ray: inverse Compton scattering + thermal Bremsstrahlung
+    float comptonEnhancement = electronDensity * temperature / 1e8;
+    emission.xray = vec3(0.8, 0.9, 1.0) * comptonEnhancement * 0.1;
+    
+    // Gamma-ray: highest energy processes (curvature radiation, etc.)
+    float gammaEfficiency = magneticField * electronDensity * 1e-3;
+    emission.gamma = vec3(1.0, 1.0, 1.0) * gammaEfficiency;
+    
+    return emission;
+}
+
+// Complete disk rendering with all advanced physics effects
+vec3 calculateCompleteDiskColor(vec3 pos, float r_radial, int diskLayer, float time, vec3 viewDir) {
+    // Apply time-dependent accretion rate variations
+    float accretionVariation = calculateAccretionRateVariation(time);
+    
+    // Start with enhanced disk color
+    vec3 diskColor = calculateEnhancedDiskColor(r_radial, diskLayer, time);
+    diskColor *= accretionVariation;
+    
+    // Apply advanced disk instabilities
+    vec3 instabilities = calculateDiskInstabilities(pos, r_radial, time);
+    diskColor *= instabilities;
+    
+    // Apply MRI turbulence effects
+    vec3 mriEffects = calculateMRITurbulence(pos, r_radial, time);
+    diskColor *= mriEffects;
+    
+    // Calculate magnetic field for advanced effects
+    vec3 magneticField = vec3(magneticFieldStrength) * normalize(vec3(pos.z, -pos.x, pos.y * 0.5));
+    float electronDensity = eddingtonFraction / (1.0 + pow(r_radial / (SagA_rs * 8.0), 1.5));
+    float temperature = diskInnerTemp * pow(r_radial / (SagA_rs * 3.0), diskTempExponent);
+    
+    // Add multi-wavelength emission
+    MultiWavelengthEmission mwEmission = calculateMultiWavelengthEmission(pos, magneticFieldStrength, electronDensity, temperature);
+    diskColor = mwEmission.optical; // Use optical for primary color
+    diskColor += mwEmission.radio * 0.3; // Add radio contribution
+    diskColor += mwEmission.xray * 0.2;  // Add X-ray contribution
+    
+    // Add synchrotron emission
+    vec3 synchrotron = calculateSynchrotronEmission(pos, magneticFieldStrength, electronDensity, time);
+    diskColor += synchrotron;
+    
+    // Apply polarization effects
+    PolarizationData polarization = calculatePolarization(pos, magneticField, viewDir, time);
+    diskColor *= polarization.color;
+    
+    // Add Iron K-alpha line emission
+    vec3 ironLine = calculateIronKAlphaLine(pos, r_radial, viewDir, time);
+    diskColor += ironLine;
+    
+    // Add magnetic field line visualization
+    vec3 fieldLines = calculateMagneticFieldLines(pos, r_radial, time);
+    diskColor += fieldLines;
+    
+    // Apply disk wind effects
+    vec3 windEffects = calculateDiskWindEffects(pos, r_radial, viewDir, time);
+    diskColor *= windEffects;
+    
+    // Add tidal disruption event (if active)
+    float tdePhase = mod(time * 0.001, 10.0) / 10.0; // 10-second cycle for demo
+    vec3 tideContribution = calculateTidalDisruption(pos, time, tdePhase);
+    diskColor += tideContribution;
+    
+    return diskColor;
 }
 
 void main() {
@@ -428,38 +1191,57 @@ void main() {
         // Test object intersections first
         if (interceptObject(ray)) { hitObject = true; break; }
         
-        // Accumulate energy from jet regions
+        // Calculate photon ring contribution
+        PhotonRingData photonRing = calculatePhotonRing(ray, time);
+        if (photonRing.intensity > 0.01) {
+            color.rgb += photonRing.color * photonRing.intensity * 0.5;
+            color.a = max(color.a, photonRing.intensity * 0.3);
+        }
+        
+        // Add lensing caustics
+        vec3 rayDirection = normalize(vec3(ray.dr, ray.dtheta * ray.r, ray.dphi * ray.r * sin(ray.theta)));
+        vec3 caustics = calculateLensingCaustics(newPos, rayDirection, time);
+        if (length(caustics) > 0.01) {
+            color.rgb += caustics * 0.8;
+            color.a = max(color.a, length(caustics) * 0.4);
+        }
+        
+        // Accumulate energy from jet regions with enhanced physics
         int currentJetRegion = crossesJetRegion(newPos, newPos);
         if (currentJetRegion > 0) {
-            // Calculate jet energy contribution
             vec3 jetPos = newPos;
             float jetHeight = abs(jetPos.y);
-            float jetAxis_distance = length(vec2(jetPos.x, jetPos.z));
             
+            // Get dynamic jet axis for this height
+            vec3 jetAxis = getJetAxisDirection(jetHeight, time);
+            if (jetPos.y < 0.0) jetAxis.y = -jetAxis.y;
+            
+            // Calculate jet radius
             float jetRadius = jetHeight * tan(radians(jetOpeningAngle * 0.5));
-            float minJetRadius = SagA_rs * 0.1; // Much smaller - just 10% of event horizon
+            float minJetRadius = SagA_rs * 0.1;
             jetRadius = max(jetRadius, minJetRadius);
             
-            float radialDistance = jetAxis_distance / jetRadius;
-            
-            // Compute beam intensity profile
-            float beam_core = 1.0 - smoothstep(0.0, 0.3, radialDistance);
-            beam_core = pow(beam_core, 4.0);
-            
-            float beam_glow = 1.0 - smoothstep(0.2, 1.0, radialDistance);
-            beam_glow = pow(beam_glow, 2.0) * 0.3;
-            
-            float beam_intensity = beam_core + beam_glow;
+            // Calculate multi-component jet emission  
+            JetComponents comp = calculateJetComponents(jetPos, jetAxis, jetRadius, time);
+            vec3 jetColor = calculateJetEmission(comp, jetPos, jetHeight);
+            float beam_intensity = (jetColor.r + jetColor.g + jetColor.b) / 3.0;
             
             if (beam_intensity > 0.01) {
-                // Define jet emission colors
-                vec3 core_color = vec3(1.0, 1.0, 1.0);
-                vec3 glow_color = vec3(0.3, 0.8, 1.0);
-                vec3 jetColor = mix(glow_color, core_color, beam_core / max(beam_intensity, 0.001));
                 
-                // Add time-varying energy fluctuations
-                float energy_flow = sin(time * 8.0 - jetHeight * 0.0001) * 0.5 + 0.5;
-                jetColor *= 1.0 + energy_flow * 0.3;
+                // Apply bulk relativistic motion Doppler boosting
+                if (jetLorentzFactor > 1.0) {
+                    // Calculate Doppler factor for bulk motion
+                    vec3 jetDirection = jetAxis;
+                    vec3 viewDirection = normalize(cam.camPos - jetPos);
+                    float cosTheta = dot(jetDirection, viewDirection);
+                    
+                    float beta = sqrt(1.0 - 1.0 / (jetLorentzFactor * jetLorentzFactor));
+                    float dopplerFactor = 1.0 / (jetLorentzFactor * (1.0 - beta * cosTheta));
+                    
+                    // Apply relativistic beaming
+                    beam_intensity *= pow(dopplerFactor, 3.0);  // Intensity boosting
+                    jetColor *= pow(dopplerFactor, 0.3);        // Spectral shift
+                }
                 
                 // Apply proximity-based brightness boost
                 float proximity_boost = 1.0 / (1.0 + jetHeight / (SagA_rs * 20.0));
@@ -485,85 +1267,32 @@ void main() {
         vec3 hitPos = vec3(ray.x, ray.y, ray.z);
         float r_radial = length(vec2(hitPos.x, hitPos.z));
         
-        // Initialize disk material properties
-        vec3 diskColor = vec3(1.0, 1.0, 1.0);
-        float opacity = 1.0;
+        // Calculate view direction for spectral line analysis
+        vec3 viewDirection = normalize(cam.camPos - hitPos);
         
-        // Apply multi-layer disk structure
-        if (enableMultiLayerDisk > 0.5 && diskLayer > 1) {
-            // Process multi-layer quasar disk
-            if (diskLayer == 2) {
-                // Warm intermediate disk layer
-                float layer1_outer = disk_r1 + (disk_r2 - disk_r1) * 0.4;
-                float layer2_outer = disk_r1 + (disk_r2 - disk_r1) * 0.7;
-                float norm_r = (r_radial - layer1_outer) / (layer2_outer - layer1_outer);
-                norm_r = clamp(norm_r, 0.0, 1.0);
-                
-                // Apply color gradient for warm layer
-                vec3 warmInner = vec3(1.0, 1.0, 0.2);
-                vec3 warmOuter = vec3(1.0, 0.6, 0.1);
-                diskColor = mix(warmInner, warmOuter, norm_r);
-                
-                // Apply turbulence modulation
-                float turbulence = sin(time * 1.5 + r_radial * 0.1) * diskTurbulence;
-                diskColor *= (1.0 + turbulence * 0.3);
-                
-                opacity = 0.85;
-                
-            } else if (diskLayer == 3) {
-                // Outer torus layer
-                float layer2_outer = disk_r1 + (disk_r2 - disk_r1) * 0.7;
-                float norm_r = (r_radial - layer2_outer) / (disk_r2 - layer2_outer);
-                norm_r = clamp(norm_r, 0.0, 1.0);
-                
-                // Apply color gradient for outer layer
-                vec3 torusInner = vec3(1.0, 0.6, 0.1);
-                vec3 torusOuter = vec3(0.8, 0.2, 0.0);
-                diskColor = mix(torusInner, torusOuter, norm_r);
-                
-                // Add structural variations to outer torus
-                float clumping = sin(time * 0.8 + r_radial * 0.05) * cos(time * 1.2 + r_radial * 0.03);
-                diskColor *= (1.0 + clumping * diskTurbulence * 0.5);
-                
-                opacity = 0.7;
-            }
+        // Calculate disk color with complete physics (MRI + magnetic fields + spectral lines)
+        vec3 diskColor = calculateCompleteDiskColor(hitPos, r_radial, diskLayer, time, viewDirection);
+        
+        // Set layer-dependent opacity
+        float opacity;
+        if (diskLayer == 1) {
+            opacity = 0.95;  // Inner layer is most opaque
+        } else if (diskLayer == 2) {
+            opacity = 0.85;  // Intermediate layer
+        } else if (diskLayer == 3) {
+            opacity = 0.7;   // Outer layer is more transparent
+        } else {
+            opacity = 0.9;   // Default single-layer opacity
         }
         
-        if (diskLayer == 1 || (enableMultiLayerDisk < 0.5)) {
-            // Process standard disk or inner hot layer
-            float r1 = disk_r1;
-            float r2 = disk_r2;
+        // Add QPO brightness modulation
+        if (qpoAmplitude > 0.0 && qpoFrequency > 0.0) {
+            float qpoPhase = 2.0 * 3.14159 * qpoFrequency * time;
+            float qpoModulation = 1.0 + qpoAmplitude * sin(qpoPhase);
             
-            float norm_r = (r_radial - r1) / (r2 - r1);
-            norm_r = clamp(norm_r, 0.0, 1.0);
-            
-            // Apply temperature-based coloring
-            if (diskTempPeak > 5e6) {
-                // Quasar mode color progression
-                vec3 innerRed = vec3(1.0, 0.1, 0.0);
-                vec3 yellow = vec3(1.0, 1.0, 0.2);
-                vec3 orange = vec3(1.0, 0.6, 0.1);
-                vec3 outerRed = vec3(0.8, 0.2, 0.0);
-                
-                if (norm_r < 0.33) {
-                    // Inner region color transition
-                    float t = norm_r / 0.33;
-                    diskColor = mix(innerRed, yellow, t);
-                } else if (norm_r < 0.66) {
-                    // Middle region color transition
-                    float t = (norm_r - 0.33) / 0.33;
-                    diskColor = mix(yellow, orange, t);
-                } else {
-                    // Outer region color transition
-                    float t = (norm_r - 0.66) / 0.34;
-                    diskColor = mix(orange, outerRed, t);
-                }
-            } else {
-                // Default mode color scheme
-                diskColor = mix(vec3(0.85, 0.9, 1.0), vec3(1.0, 1.0, 1.0), norm_r);
-            }
-            
-            opacity = 0.9;
+            // QPOs are stronger in inner disk regions
+            float qpoStrength = 1.0 / (1.0 + pow(r_radial / (SagA_rs * 10.0), 2.0));
+            diskColor *= (1.0 + (qpoModulation - 1.0) * qpoStrength);
         }
         
         // Apply relativistic rotation and Doppler effects
