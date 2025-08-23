@@ -322,20 +322,27 @@ int crossesMultiLayerDisk(vec3 oldPos, vec3 newPos) {
     return 0; // No intersection
 }
 
-// Jet intersection detection - similar to disk but for vertical planes
+// Jet intersection detection - continuous beam check
 int crossesJetRegion(vec3 oldPos, vec3 newPos) {
     if (enableJets < 0.5) return 0; // Jets disabled
     
-    // Check if we're in the jet cone regions (above/below disk plane)
-    bool inJetZone = (abs(newPos.y) > disk_r1 * 2.0); // Jets start above disk
+    // Jets start closer to the black hole and extend outward
+    float jetStartHeight = SagA_rs * 3.0; // Start closer to black hole
+    bool inJetZone = (abs(newPos.y) > jetStartHeight);
     if (!inJetZone) return 0;
     
-    // Distance from Y-axis (jet axis)
+    // Distance from Y-axis (jet axis) 
     float jetAxis_distance = length(vec2(newPos.x, newPos.z));
     
     // Jet opening angle creates cone - wider with distance from black hole
     float jetHeight = abs(newPos.y);
-    float jetRadius = jetHeight * tan(radians(jetOpeningAngle));
+    
+    // Make jets narrower and more focused
+    float jetRadius = jetHeight * tan(radians(jetOpeningAngle * 0.5)); // Narrower jets
+    
+    // Add minimum jet radius to ensure visibility near black hole
+    float minJetRadius = SagA_rs * 0.1; // Much smaller - just 10% of event horizon
+    jetRadius = max(jetRadius, minJetRadius);
     
     // Check if ray is within jet cone
     if (jetAxis_distance <= jetRadius) {
@@ -374,6 +381,10 @@ void main() {
     bool hitJet       = false;
     int diskLayer     = 0; // Track which disk layer was hit
     int jetRegion     = 0; // Track which jet was hit (1=north, 2=south)
+    
+    // Jet beam accumulation
+    vec4 jetAccumulation = vec4(0.0);
+    float jetPathLength = 0.0;
 
     int steps = int(maxRaySteps);
     
@@ -424,9 +435,50 @@ void main() {
         // Check objects first
         if (interceptObject(ray)) { hitObject = true; break; }
         
-        // Check jet intersection (higher priority than disk)
-        jetRegion = crossesJetRegion(prevPos, newPos);
-        if (jetRegion > 0) { hitJet = true; break; }
+        // Check if ray is currently in jet region - ACCUMULATE instead of break
+        int currentJetRegion = crossesJetRegion(newPos, newPos);
+        if (currentJetRegion > 0) {
+            // Accumulate jet energy along the path
+            vec3 jetPos = newPos;
+            float jetHeight = abs(jetPos.y);
+            float jetAxis_distance = length(vec2(jetPos.x, jetPos.z));
+            
+            float jetRadius = jetHeight * tan(radians(jetOpeningAngle * 0.5));
+            float minJetRadius = SagA_rs * 0.1; // Much smaller - just 10% of event horizon
+            jetRadius = max(jetRadius, minJetRadius);
+            
+            float radialDistance = jetAxis_distance / jetRadius;
+            
+            // Calculate beam contribution for this step
+            float beam_core = 1.0 - smoothstep(0.0, 0.3, radialDistance);
+            beam_core = pow(beam_core, 4.0);
+            
+            float beam_glow = 1.0 - smoothstep(0.2, 1.0, radialDistance);
+            beam_glow = pow(beam_glow, 2.0) * 0.3;
+            
+            float beam_intensity = beam_core + beam_glow;
+            
+            if (beam_intensity > 0.01) {
+                // Energy beam colors
+                vec3 core_color = vec3(1.0, 1.0, 1.0);
+                vec3 glow_color = vec3(0.3, 0.8, 1.0);
+                vec3 jetColor = mix(glow_color, core_color, beam_core / max(beam_intensity, 0.001));
+                
+                // Energy effects
+                float energy_flow = sin(time * 8.0 - jetHeight * 0.0001) * 0.5 + 0.5;
+                jetColor *= 1.0 + energy_flow * 0.3;
+                
+                // Distance brightness
+                float proximity_boost = 1.0 / (1.0 + jetHeight / (SagA_rs * 20.0));
+                jetColor *= 1.0 + proximity_boost * 2.0;
+                
+                // Accumulate this step's contribution
+                float stepAlpha = beam_intensity * 0.02; // Small contribution per step
+                jetAccumulation.rgb += jetColor * stepAlpha * jetBrightness;
+                jetAccumulation.a += stepAlpha;
+                jetPathLength += D_LAMBDA;
+            }
+        }
         
         // Then check disk intersection
         diskLayer = crossesMultiLayerDisk(prevPos, newPos);
@@ -596,63 +648,8 @@ void main() {
         color = vec4(diskColor, opacity);
 
     } else if (hitJet) {
-        // ENERGY BEAM JETS - Focused beam appearance
-        vec3 jetPos = vec3(ray.x, ray.y, ray.z);
-        float jetHeight = abs(jetPos.y);
-        float jetAxis_distance = length(vec2(jetPos.x, jetPos.z));
-        
-        // Create much tighter, focused beam
-        float jetRadius = jetHeight * tan(radians(jetOpeningAngle));
-        float radialDistance = jetAxis_distance / jetRadius; // 0 at center, 1 at edge
-        
-        // BEAM CORE: Intense bright center with very sharp falloff
-        float beam_core = 1.0 - smoothstep(0.0, 0.3, radialDistance); // Core is 30% of radius
-        beam_core = pow(beam_core, 8.0); // Very sharp falloff for focused beam
-        
-        // BEAM GLOW: Softer outer glow
-        float beam_glow = 1.0 - smoothstep(0.2, 1.0, radialDistance);
-        beam_glow = pow(beam_glow, 3.0) * 0.4; // Dimmer glow around core
-        
-        // COMBINE: Intense core + soft glow
-        float beam_intensity = beam_core + beam_glow;
-        
-        // ENERGY BEAM COLORS: Bright electric blue-white core
-        vec3 core_color = vec3(1.0, 1.0, 1.0); // Pure white center
-        vec3 glow_color = vec3(0.3, 0.8, 1.0); // Electric blue glow
-        
-        // Mix colors based on beam intensity
-        vec3 jetColor = mix(glow_color, core_color, beam_core / max(beam_intensity, 0.001));
-        
-        // ENERGY PULSING: Make it look like flowing energy
-        float energy_flow = sin(time * 8.0 - jetHeight * 0.0001) * 0.5 + 0.5;
-        energy_flow = pow(energy_flow, 2.0); // Sharper pulses
-        jetColor *= 1.0 + energy_flow * 0.5;
-        
-        // ELECTROMAGNETIC CRACKLING: High-frequency energy variations
-        float crackle = sin(time * 20.0 + jetAxis_distance * 0.01) * 0.3;
-        crackle *= cos(time * 15.0 + jetHeight * 0.0005) * 0.3;
-        jetColor *= 1.0 + crackle * beam_core; // Only crackling in the core
-        
-        // DISTANCE BRIGHTNESS: Brighter near black hole (more power)
-        float proximity_boost = 1.0 / (1.0 + jetHeight / (SagA_rs * 20.0));
-        jetColor *= 1.0 + proximity_boost * 3.0;
-        
-        // RELATIVISTIC BEAMING: Doppler shift effects
-        bool northJet = (jetRegion == 1);
-        vec3 jetVelocity = northJet ? vec3(0, 0.95, 0) : vec3(0, -0.95, 0); // 95% speed of light
-        vec3 viewDir = normalize(cam.camPos - jetPos);
-        float doppler = 1.0 + 0.8 * dot(jetVelocity, viewDir);
-        jetColor *= doppler;
-        
-        // BEAM BRIGHTNESS: Much brighter than original
-        jetColor *= beam_intensity * jetBrightness * eddingtonFraction * 2.0;
-        
-        // FOCUSED TRANSPARENCY: More opaque core, transparent edges
-        float alpha = beam_intensity;
-        alpha *= exp(-jetHeight / (SagA_rs * 100.0)); // Fade with distance
-        alpha = clamp(alpha, 0.0, 0.95); // Keep some transparency for realism
-        
-        color = vec4(jetColor, alpha);
+        // This case should no longer be used - jets are now accumulated
+        color = vec4(0.0, 0.0, 0.0, 1.0);
 
     } else if (hitBlackHole) {
         color = vec4(0.0, 0.0, 0.0, 1.0);
@@ -670,6 +667,17 @@ void main() {
 
     } else {
         color = vec4(0.0);
+    }
+    
+    // Add accumulated jet energy to any non-black-hole result
+    if (!hitBlackHole && jetAccumulation.a > 0.01) {
+        // Blend accumulated jet energy with existing color
+        float jetAlpha = clamp(jetAccumulation.a * eddingtonFraction, 0.0, 0.95);
+        vec3 finalJetColor = jetAccumulation.rgb / max(jetAccumulation.a, 0.001);
+        
+        // Alpha blend jets with existing color
+        color.rgb = color.rgb * (1.0 - jetAlpha) + finalJetColor * jetAlpha;
+        color.a = max(color.a, jetAlpha);
     }
     
     // Clean rendering - no debug indicators
