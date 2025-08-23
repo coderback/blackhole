@@ -232,14 +232,19 @@ void geodesicRHS(Ray ray, out vec3 d1, out vec3 d2) {
     d2.z = -2.0*dr*dphi/r - 2.0*cos(theta)/(sin(theta)) * dtheta * dphi;
 }
 
-// Simplified Kerr geodesic equations (stable version)
+// Stable Kerr geodesic equations with numerical safeguards
 void geodesicRHS_Kerr(Ray ray, out vec3 d1, out vec3 d2) {
     float r = ray.r, theta = ray.theta;
     float dr = ray.dr, dtheta = ray.dtheta, dphi = ray.dphi;
     float E = ray.E, L = ray.L;
     
+    // Numerical safeguards
+    r = max(r, SagA_rs * 0.5); // Prevent going too close to singularity
+    theta = clamp(theta, 0.01, 3.14159 - 0.01); // Avoid poles
+    
     // Start with Schwarzschild geodesics (known to be stable)
     float f = 1.0 - SagA_rs / r;
+    f = max(f, 0.01); // Prevent division by zero
     float dt_dL = E / f;
     
     d1 = vec3(dr, dtheta, dphi);
@@ -251,25 +256,27 @@ void geodesicRHS_Kerr(Ray ray, out vec3 d1, out vec3 d2) {
     
     d2.y = -2.0*dr*dtheta/r + sin(theta)*cos(theta)*dphi*dphi;
     
-    d2.z = -2.0*dr*dphi/r - 2.0*cos(theta)/(sin(theta)) * dtheta * dphi;
+    // Safe cotangent calculation
+    float sinTheta = sin(theta);
+    float cotTheta = (abs(sinTheta) > 0.01) ? cos(theta)/sinTheta : 0.0;
+    d2.z = -2.0*dr*dphi/r - 2.0*cotTheta * dtheta * dphi;
     
-    // Add simple frame dragging correction (the key Kerr signature)
-    if (spinParameter > 0.0) {
-        float a = spinParameter * SagA_rs / 2.0; // Physical spin parameter
-        float sin2Theta = sin(theta) * sin(theta);
+    // Add VERY gentle Kerr corrections to maintain stability
+    if (spinParameter > 0.01) {
+        float a = spinParameter * 0.2; // Much smaller spin effect for stability
+        float sin2Theta = sinTheta * sinTheta;
         
-        // Frame dragging: additional φ acceleration 
-        float frame_drag = 2.0 * a * SagA_rs * E / (r * r * r);
-        d2.z += frame_drag * sin2Theta;
-        
-        // Small correction to radial motion from spin-orbit coupling
-        float spin_radial = -a * a * sin(2.0*theta) * dtheta * dphi / (r * r * r);
-        d2.x += spin_radial;
-        
-        // Small correction to polar motion  
-        float spin_polar = a * a * SagA_rs * sin(2.0*theta) * dphi * dphi / (4.0 * r * r * r * r);
-        d2.y += spin_polar;
+        // Gentle frame dragging - reduced by factor of 10
+        if (r > SagA_rs * 2.0) { // Only outside event horizon
+            float frame_drag = 0.1 * a * SagA_rs / (r * r * r);
+            d2.z += frame_drag * sin2Theta * E;
+        }
     }
+    
+    // Clamp accelerations to prevent runaway behavior
+    d2.x = clamp(d2.x, -1e6, 1e6);
+    d2.y = clamp(d2.y, -1e6, 1e6); 
+    d2.z = clamp(d2.z, -1e6, 1e6);
 }
 void rk4Step(inout Ray ray, float dL) {
     vec3 k1a, k1b;
