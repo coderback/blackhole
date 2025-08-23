@@ -8,16 +8,15 @@
 #include <cmath>
 using namespace glm;
 
-// global vars
+// Global variables
 const int WIDTH = 800;
 const int HEIGHT = 600;
 
-// functions
 
-// structures and classes :D
+// Core application classes
 class Engine{
 public:
-    // -- Quad & Texture render
+    // Quad rendering components
     GLFWwindow* window;
     GLuint quadVAO;
     GLuint texture;
@@ -53,11 +52,11 @@ public:
     GLuint CreateShaderProgram(){
         const char* vertexShaderSource = R"(
         #version 330 core
-        layout (location = 0) in vec2 aPos;  // Changed to vec2
+        layout (location = 0) in vec2 aPos;
         layout (location = 1) in vec2 aTexCoord;
         out vec2 TexCoord;
         void main() {
-            gl_Position = vec4(aPos, 0.0, 1.0);  // Explicit z=0
+            gl_Position = vec4(aPos, 0.0, 1.0);
             TexCoord = aTexCoord;
         })";
 

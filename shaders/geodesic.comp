@@ -41,82 +41,73 @@ layout(std140, binding = 4) uniform Features {
     float enableJets;
     float jetOpeningAngle;
     float jetBrightness;
-    float time; // Add time for animation
+    float time;
 };
 
 const float SagA_rs = 1.269e10;
 const float D_LAMBDA = 1e7;
 const double ESCAPE_R = 1e30;
 
-// Proper Boyer-Lindquist Kerr metric components (dimensionless units)
-// Working in units where M = 1, so SagA_rs = 2M = 2
+// Boyer-Lindquist Kerr metric components in dimensionless units
 float kerrDelta(float r, float a) {
-    // Δ = r² - 2r + a² (dimensionless)
+    // Kerr metric delta function
     return r*r - 2.0*r + a*a;
 }
 
 float kerrSigma(float r, float theta, float a) {
-    // Σ = r² + a²cos²θ (dimensionless)
+    // Kerr metric sigma function
     float cosTheta = cos(theta);
     return r*r + a*a*cosTheta*cosTheta;
 }
 
-// Complete metric tensor components
+// Kerr metric tensor components
 float kerrG_tt(float r, float theta, float a) {
-    // g_tt = -(1 - 2r/Σ)
     float sigma = kerrSigma(r, theta, a);
     return -(1.0 - 2.0*r/sigma);
 }
 
 float kerrG_rr(float r, float theta, float a) {
-    // g_rr = Σ/Δ
     float sigma = kerrSigma(r, theta, a);
     float delta = kerrDelta(r, a);
-    return sigma / (delta + 1e-6); // Add epsilon for numerical stability
+    return sigma / (delta + 1e-6);
 }
 
 float kerrG_thetatheta(float r, float theta, float a) {
-    // g_θθ = Σ
     return kerrSigma(r, theta, a);
 }
 
 float kerrG_phiphi(float r, float theta, float a) {
-    // g_φφ = sin²θ[(r² + a²)Σ + 2a²r sin²θ]/Σ
     float sigma = kerrSigma(r, theta, a);
     float sin2Theta = sin(theta) * sin(theta);
     return sin2Theta * ((r*r + a*a)*sigma + 2.0*a*a*r*sin2Theta) / sigma;
 }
 
 float kerrG_tphi(float r, float theta, float a) {
-    // g_tφ = -2ar sin²θ/Σ (frame dragging term!)
     float sigma = kerrSigma(r, theta, a);
     float sin2Theta = sin(theta) * sin(theta);
     return -2.0*a*r*sin2Theta / sigma;
 }
 
-// Kerr ISCO (Innermost Stable Circular Orbit) calculation
+// Calculate innermost stable circular orbit for Kerr black hole
 float kerrISCO(float a) {
-    float dimensionlessSpin = a / (SagA_rs / 2.0); // a/M
+    float dimensionlessSpin = a / (SagA_rs / 2.0);
     float Z1 = 1.0 + pow(1.0 - dimensionlessSpin*dimensionlessSpin, 1.0/3.0) * 
                (pow(1.0 + dimensionlessSpin, 1.0/3.0) + pow(1.0 - dimensionlessSpin, 1.0/3.0));
     float Z2 = sqrt(3.0*dimensionlessSpin*dimensionlessSpin + Z1*Z1);
     
-    // Choose prograde (+) or retrograde (-) orbit
     float sign = (dimensionlessSpin >= 0.0) ? 1.0 : -1.0;
     return (SagA_rs / 2.0) * (3.0 + Z2 + sign * sqrt((3.0 - Z1) * (3.0 + Z1 + 2.0*Z2)));
 }
 
-// Check if point is within ergosphere
+// Determine if position is within ergosphere boundary
 bool inErgosphere(float r, float theta, float a) {
-    // r_ergo = M + sqrt(M² - a²cos²θ) in dimensionless units (M=1)
     float cosTheta = cos(theta);
     float ergosurface = 1.0 + sqrt(1.0 - a*a*cosTheta*cosTheta);
     return r < ergosurface;
 }
 
-// Effective potential functions for Kerr geodesics
+// Kerr geodesic effective potential functions
 float kerrRadialPotential(float r, float E, float L, float Q, float a) {
-    // R(r) = [E(r² + a²) - aL]² - Δ[Q + (L - aE)²]
     float delta = kerrDelta(r, a);
     float term1 = E*(r*r + a*a) - a*L;
     float term2 = Q + (L - a*E)*(L - a*E);
@@ -124,19 +115,18 @@ float kerrRadialPotential(float r, float E, float L, float Q, float a) {
 }
 
 float kerrThetaPotential(float theta, float E, float L, float Q, float a) {
-    // Θ(θ) = Q - cos²θ[a²(E² - 1) + L²/sin²θ]
     float cosTheta = cos(theta);
     float sinTheta = sin(theta);
     float cos2Theta = cosTheta * cosTheta;
     float sin2Theta = sinTheta * sinTheta;
     
-    // Avoid division by zero at poles
+    // Handle singularity at polar regions
     if (abs(sinTheta) < 1e-6) return Q;
     
     return Q - cos2Theta * (a*a*(E*E - 1.0) + L*L/sin2Theta);
 }
 
-// Globals to store hit info
+// Global variables for intersection tracking
 vec4 objectColor = vec4(0.0);
 vec3 hitCenter = vec3(0.0);
 float hitRadius = 0.0;
@@ -144,7 +134,7 @@ float hitRadius = 0.0;
 struct Ray {
     float x, y, z, r, theta, phi;
     float dr, dtheta, dphi;
-    float E, L, Q; // Added Carter constant Q for Kerr geodesics
+    float E, L, Q;
 };
 Ray initRay(vec3 pos, vec3 dir) {
     Ray ray;
@@ -160,21 +150,20 @@ Ray initRay(vec3 pos, vec3 dir) {
 
     ray.L = ray.r * ray.r * sin(ray.theta) * ray.dphi;
     
-    // Mode-dependent initialization
+    // Initialize conserved quantities based on metric type
     if (enableKerrMetric > 0.5) {
-        // Kerr mode: Use same initialization as Schwarzschild for stability
-        // The frame dragging effects will come from the geodesic equations
+        // Kerr metric initialization
         float f = 1.0 - SagA_rs / ray.r;
         float dt_dL = sqrt((ray.dr*ray.dr)/f + ray.r*ray.r*(ray.dtheta*ray.dtheta + sin(ray.theta)*sin(ray.theta)*ray.dphi*ray.dphi));
         ray.E = f * dt_dL;
-        ray.Q = 0.0; // Simplified for stability
+        ray.Q = 0.0;
         
     } else {
-        // Schwarzschild mode: Original initialization
+        // Schwarzschild metric initialization
         float f = 1.0 - SagA_rs / ray.r;
         float dt_dL = sqrt((ray.dr*ray.dr)/f + ray.r*ray.r*(ray.dtheta*ray.dtheta + sin(ray.theta)*sin(ray.theta)*ray.dphi*ray.dphi));
         ray.E = f * dt_dL;
-        ray.Q = 0.0; // Not used in Schwarzschild
+        ray.Q = 0.0;
     }
 
     return ray;
@@ -182,20 +171,18 @@ Ray initRay(vec3 pos, vec3 dir) {
 
 bool intercept(Ray ray, float rs) {
     if (enableKerrMetric > 0.5) {
-        // Kerr horizon: r_+ = M + sqrt(M² - a²) in dimensionless units
-        float M = 1.0; // Working in units where M = 1
+        // Calculate Kerr event horizon radius
+        float M = 1.0;
         float a = spinParameter;
         float r_horizon = M + sqrt(max(M*M - a*a, 0.0));
         
-        // Scale to physical units
         float r_horizon_phys = r_horizon * (SagA_rs / 2.0);
         return ray.r <= r_horizon_phys;
     } else {
-        // Schwarzschild horizon
         return ray.r <= rs;
     }
 }
-// Returns true on hit, captures center, radius, and base color
+// Test ray intersection with scene objects
 bool interceptObject(Ray ray) {
     vec3 P = vec3(ray.x, ray.y, ray.z);
     for (int i = 0; i < numObjects; ++i) {
@@ -205,7 +192,7 @@ bool interceptObject(Ray ray) {
         
         bool hit = false;
         
-        // Standard spherical object intersection
+        // Test spherical intersection
         hit = distance(P, center) <= radius;
         
         if (hit) {
@@ -232,48 +219,47 @@ void geodesicRHS(Ray ray, out vec3 d1, out vec3 d2) {
     d2.z = -2.0*dr*dphi/r - 2.0*cos(theta)/(sin(theta)) * dtheta * dphi;
 }
 
-// Stable Kerr geodesic equations with numerical safeguards
+// Kerr geodesic equations with numerical stability
 void geodesicRHS_Kerr(Ray ray, out vec3 d1, out vec3 d2) {
     float r = ray.r, theta = ray.theta;
     float dr = ray.dr, dtheta = ray.dtheta, dphi = ray.dphi;
     float E = ray.E, L = ray.L;
     
-    // Numerical safeguards
-    r = max(r, SagA_rs * 0.5); // Prevent going too close to singularity
-    theta = clamp(theta, 0.01, 3.14159 - 0.01); // Avoid poles
+    // Apply numerical stability constraints
+    r = max(r, SagA_rs * 0.5);
+    theta = clamp(theta, 0.01, 3.14159 - 0.01);
     
-    // Start with Schwarzschild geodesics (known to be stable)
+    // Base Schwarzschild geodesic computation
     float f = 1.0 - SagA_rs / r;
-    f = max(f, 0.01); // Prevent division by zero
+    f = max(f, 0.01);
     float dt_dL = E / f;
     
     d1 = vec3(dr, dtheta, dphi);
     
-    // Base Schwarzschild equations
     d2.x = - (SagA_rs / (2.0 * r*r)) * f * dt_dL * dt_dL
          + (SagA_rs / (2.0 * r*r * f)) * dr * dr
          + r * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi);
     
     d2.y = -2.0*dr*dtheta/r + sin(theta)*cos(theta)*dphi*dphi;
     
-    // Safe cotangent calculation
+    // Compute cotangent with singularity protection
     float sinTheta = sin(theta);
     float cotTheta = (abs(sinTheta) > 0.01) ? cos(theta)/sinTheta : 0.0;
     d2.z = -2.0*dr*dphi/r - 2.0*cotTheta * dtheta * dphi;
     
-    // Add VERY gentle Kerr corrections to maintain stability
+    // Apply frame-dragging corrections for Kerr metric
     if (spinParameter > 0.01) {
-        float a = spinParameter * 0.2; // Much smaller spin effect for stability
+        float a = spinParameter * 0.2;
         float sin2Theta = sinTheta * sinTheta;
         
-        // Gentle frame dragging - reduced by factor of 10
-        if (r > SagA_rs * 2.0) { // Only outside event horizon
+        // Apply frame-dragging effect
+        if (r > SagA_rs * 2.0) {
             float frame_drag = 0.1 * a * SagA_rs / (r * r * r);
             d2.z += frame_drag * sin2Theta * E;
         }
     }
     
-    // Clamp accelerations to prevent runaway behavior
+    // Limit acceleration values for numerical stability
     d2.x = clamp(d2.x, -1e6, 1e6);
     d2.y = clamp(d2.y, -1e6, 1e6); 
     d2.z = clamp(d2.z, -1e6, 1e6);
@@ -281,7 +267,7 @@ void geodesicRHS_Kerr(Ray ray, out vec3 d1, out vec3 d2) {
 void rk4Step(inout Ray ray, float dL) {
     vec3 k1a, k1b;
     
-    // Use appropriate geodesic equations based on mode
+    // Select geodesic integration method
     if (enableKerrMetric > 0.5) {
         geodesicRHS_Kerr(ray, k1a, k1b);
     } else {
@@ -305,7 +291,7 @@ bool crossesEquatorialPlane(vec3 oldPos, vec3 newPos) {
     return crossed && (r >= disk_r1 && r <= disk_r2);
 }
 
-// Multi-layer disk intersection - returns layer index (0=none, 1=inner, 2=warm, 3=torus)
+// Determine accretion disk layer intersection
 int crossesMultiLayerDisk(vec3 oldPos, vec3 newPos) {
     bool crossed = (oldPos.y * newPos.y < 0.0);
     if (!crossed) return 0;
@@ -313,55 +299,55 @@ int crossesMultiLayerDisk(vec3 oldPos, vec3 newPos) {
     float r = length(vec2(newPos.x, newPos.z));
     
     if (enableMultiLayerDisk > 0.5) {
-        // TON618 Quasar: same size as Sgr A* disk, just enhanced layers
-        float layer1_outer = disk_r1 + (disk_r2 - disk_r1) * 0.4;  // Inner 40% of standard disk
-        float layer2_outer = disk_r1 + (disk_r2 - disk_r1) * 0.7;  // Middle 30% of standard disk  
-        float layer3_outer = disk_r2;                               // Outer 30% to disk edge
+        // Multi-layer quasar disk structure
+        float layer1_outer = disk_r1 + (disk_r2 - disk_r1) * 0.4;
+        float layer2_outer = disk_r1 + (disk_r2 - disk_r1) * 0.7;
+        float layer3_outer = disk_r2;
         
-        if (r >= disk_r1 && r <= layer1_outer) return 1;        // Inner hot layer
-        if (r > layer1_outer && r <= layer2_outer) return 2; // Warm disk
-        if (r > layer2_outer && r <= layer3_outer) return 3; // Torus
+        if (r >= disk_r1 && r <= layer1_outer) return 1;
+        if (r > layer1_outer && r <= layer2_outer) return 2;
+        if (r > layer2_outer && r <= layer3_outer) return 3;
     } else {
-        // Standard single disk
+        // Single-layer disk structure
         if (r >= disk_r1 && r <= disk_r2) return 1;
     }
     
-    return 0; // No intersection
+    return 0;
 }
 
-// Jet intersection detection - continuous beam check
+// Detect intersection with relativistic jet regions
 int crossesJetRegion(vec3 oldPos, vec3 newPos) {
-    if (enableJets < 0.5) return 0; // Jets disabled
+    if (enableJets < 0.5) return 0;
     
-    // Jets start closer to the black hole and extend outward
-    float jetStartHeight = SagA_rs * 3.0; // Start closer to black hole
+    // Define jet emission region near black hole
+    float jetStartHeight = SagA_rs * 3.0;
     bool inJetZone = (abs(newPos.y) > jetStartHeight);
     if (!inJetZone) return 0;
     
-    // Distance from Y-axis (jet axis) 
+    // Calculate distance from jet axis 
     float jetAxis_distance = length(vec2(newPos.x, newPos.z));
     
-    // Jet opening angle creates cone - wider with distance from black hole
+    // Compute conical jet geometry
     float jetHeight = abs(newPos.y);
     
-    // Make jets narrower and more focused
-    float jetRadius = jetHeight * tan(radians(jetOpeningAngle * 0.5)); // Narrower jets
+    // Calculate jet radius based on opening angle
+    float jetRadius = jetHeight * tan(radians(jetOpeningAngle * 0.5));
     
-    // Add minimum jet radius to ensure visibility near black hole
-    float minJetRadius = SagA_rs * 0.1; // Much smaller - just 10% of event horizon
+    // Enforce minimum jet radius for visibility
+    float minJetRadius = SagA_rs * 0.1;
     jetRadius = max(jetRadius, minJetRadius);
     
-    // Check if ray is within jet cone
+    // Test if position is within jet cone
     if (jetAxis_distance <= jetRadius) {
-        // Determine which jet (north=1, south=2)
+        // Identify jet hemisphere
         return (newPos.y > 0.0) ? 1 : 2;
     }
     
-    return 0; // No jet intersection
+    return 0;
 }
 
 void main() {
-    // Use dynamic compute resolution based on quality settings
+    // Calculate dynamic resolution based on quality
     ivec2 computeSize = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
     int WIDTH  = computeSize.x;
     int HEIGHT = computeSize.y;
@@ -369,7 +355,7 @@ void main() {
     ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
     if (pix.x >= WIDTH || pix.y >= HEIGHT) return;
 
-    // Enhanced ray initialization with jittered sampling for anti-aliasing
+    // Initialize ray with anti-aliasing jitter
     float jitterX = (sin(time * 1.7 + pix.x * 0.1) * 0.5 + 0.5) * 0.8 - 0.4;
     float jitterY = (cos(time * 2.3 + pix.y * 0.1) * 0.5 + 0.5) * 0.8 - 0.4;
     
@@ -386,49 +372,49 @@ void main() {
     bool hitDisk      = false;
     bool hitObject    = false;
     bool hitJet       = false;
-    int diskLayer     = 0; // Track which disk layer was hit
-    int jetRegion     = 0; // Track which jet was hit (1=north, 2=south)
+    int diskLayer     = 0;
+    int jetRegion     = 0;
     
-    // Jet beam accumulation
+    // Accumulate jet energy along ray path
     vec4 jetAccumulation = vec4(0.0);
     float jetPathLength = 0.0;
 
     int steps = int(maxRaySteps);
     
-    // Phase 6: Enhanced adaptive quality system
+    // Adaptive quality based on camera distance
     float distanceFromBH = length(cam.camPos);
     float adaptiveFactor = 1.0;
     
-    // Distance-based quality scaling with more granular levels
+    // Scale quality based on distance from black hole
     if (distanceFromBH > SagA_rs * 200.0) {
-        adaptiveFactor = 0.4; // Very far: minimal quality needed
+        adaptiveFactor = 0.4;
     } else if (distanceFromBH > SagA_rs * 100.0) {
-        adaptiveFactor = 0.6; // Far from BH: fewer steps needed
+        adaptiveFactor = 0.6;
     } else if (distanceFromBH > SagA_rs * 50.0) {
-        adaptiveFactor = 0.75; // Medium-far distance
+        adaptiveFactor = 0.75;
     } else if (distanceFromBH > SagA_rs * 20.0) {
-        adaptiveFactor = 0.85; // Medium distance
+        adaptiveFactor = 0.85;
     } else if (distanceFromBH > SagA_rs * 10.0) {
-        adaptiveFactor = 0.95; // Close to BH: near full quality
+        adaptiveFactor = 0.95;
     }
-    // Very close to BH (< 10 Rs): use full steps for maximum quality
+    // Use maximum quality when very close to black hole
     
     steps = int(steps * adaptiveFactor);
     
-    // Complex effects require more steps - scale based on active features
+    // Increase step count for complex relativistic effects
     float complexityFactor = 1.0;
     if (enableMultiLayerDisk > 0.5) complexityFactor += 0.1;
     if (enableDopplerBeaming > 0.5) complexityFactor += 0.15;
     if (enableKerrMetric > 0.5) complexityFactor += 0.2;
     if (enableJets > 0.5) complexityFactor += 0.1;
     
-    // Apply complexity scaling but cap it to avoid performance issues
+    // Apply complexity factor with performance limit
     steps = int(steps * min(complexityFactor, 1.4));
     
-    // Enhanced camera movement responsiveness
+    // Reduce quality during camera movement for responsiveness
     if (cam.moving) {
-        steps = int(steps * 0.7); // Less aggressive reduction to maintain visual stability
-        // Slightly reduce expensive effects during movement for responsiveness
+        steps = int(steps * 0.7);
+        // Reduce effect complexity during movement
         complexityFactor *= 0.85;
     }
 
@@ -439,13 +425,13 @@ void main() {
 
         vec3 newPos = vec3(ray.x, ray.y, ray.z);
         
-        // Check objects first
+        // Test object intersections first
         if (interceptObject(ray)) { hitObject = true; break; }
         
-        // Check if ray is currently in jet region - ACCUMULATE instead of break
+        // Accumulate energy from jet regions
         int currentJetRegion = crossesJetRegion(newPos, newPos);
         if (currentJetRegion > 0) {
-            // Accumulate jet energy along the path
+            // Calculate jet energy contribution
             vec3 jetPos = newPos;
             float jetHeight = abs(jetPos.y);
             float jetAxis_distance = length(vec2(jetPos.x, jetPos.z));
@@ -456,7 +442,7 @@ void main() {
             
             float radialDistance = jetAxis_distance / jetRadius;
             
-            // Calculate beam contribution for this step
+            // Compute beam intensity profile
             float beam_core = 1.0 - smoothstep(0.0, 0.3, radialDistance);
             beam_core = pow(beam_core, 4.0);
             
@@ -466,85 +452,76 @@ void main() {
             float beam_intensity = beam_core + beam_glow;
             
             if (beam_intensity > 0.01) {
-                // Energy beam colors
+                // Define jet emission colors
                 vec3 core_color = vec3(1.0, 1.0, 1.0);
                 vec3 glow_color = vec3(0.3, 0.8, 1.0);
                 vec3 jetColor = mix(glow_color, core_color, beam_core / max(beam_intensity, 0.001));
                 
-                // Energy effects
+                // Add time-varying energy fluctuations
                 float energy_flow = sin(time * 8.0 - jetHeight * 0.0001) * 0.5 + 0.5;
                 jetColor *= 1.0 + energy_flow * 0.3;
                 
-                // Distance brightness
+                // Apply proximity-based brightness boost
                 float proximity_boost = 1.0 / (1.0 + jetHeight / (SagA_rs * 20.0));
                 jetColor *= 1.0 + proximity_boost * 2.0;
                 
-                // Accumulate this step's contribution
-                float stepAlpha = beam_intensity * 0.02; // Small contribution per step
+                // Add energy contribution for this step
+                float stepAlpha = beam_intensity * 0.02;
                 jetAccumulation.rgb += jetColor * stepAlpha * jetBrightness;
                 jetAccumulation.a += stepAlpha;
                 jetPathLength += D_LAMBDA;
             }
         }
         
-        // Then check disk intersection
+        // Test accretion disk intersection
         diskLayer = crossesMultiLayerDisk(prevPos, newPos);
         if (diskLayer > 0) { hitDisk = true; break; }
         prevPos = newPos;
         if (ray.r > ESCAPE_R) break;
     }
 
-    // DEBUG: Force some disk hits for testing (commented out)
-    /*if (!hitDisk && pix.x > 50 && pix.x < 150 && pix.y > 50 && pix.y < 150) {
-        hitDisk = true;
-        diskLayer = 1;
-        // Force a simple test position for the hit
-        ray.x = disk_r1 * 1.5;
-        ray.y = 0.0;
-        ray.z = 0.0;
-    }*/
     
     if (hitDisk) {
         vec3 hitPos = vec3(ray.x, ray.y, ray.z);
-        float r_radial = length(vec2(hitPos.x, hitPos.z)); // cylindrical radius
+        float r_radial = length(vec2(hitPos.x, hitPos.z));
         
-        // Start with proper disk color
-        vec3 diskColor = vec3(1.0, 1.0, 1.0); // Default white
+        // Initialize disk material properties
+        vec3 diskColor = vec3(1.0, 1.0, 1.0);
         float opacity = 1.0;
         
-        // Multi-layer disk structure for quasar mode
+        // Apply multi-layer disk structure
         if (enableMultiLayerDisk > 0.5 && diskLayer > 1) {
-            // Multi-layer quasar disk with enhanced physics
+            // Process multi-layer quasar disk
             if (diskLayer == 2) {
-                // Warm disk layer (middle section of standard disk)
+                // Warm intermediate disk layer
                 float layer1_outer = disk_r1 + (disk_r2 - disk_r1) * 0.4;
                 float layer2_outer = disk_r1 + (disk_r2 - disk_r1) * 0.7;
                 float norm_r = (r_radial - layer1_outer) / (layer2_outer - layer1_outer);
                 norm_r = clamp(norm_r, 0.0, 1.0);
                 
-                // Yellow to Orange gradient for middle layer
-                vec3 warmInner = vec3(1.0, 1.0, 0.2); // Yellow
-                vec3 warmOuter = vec3(1.0, 0.6, 0.1); // Orange
+                // Apply color gradient for warm layer
+                vec3 warmInner = vec3(1.0, 1.0, 0.2);
+                vec3 warmOuter = vec3(1.0, 0.6, 0.1);
                 diskColor = mix(warmInner, warmOuter, norm_r);
                 
-                // Add turbulence effects
+                // Apply turbulence modulation
                 float turbulence = sin(time * 1.5 + r_radial * 0.1) * diskTurbulence;
                 diskColor *= (1.0 + turbulence * 0.3);
                 
                 opacity = 0.85;
                 
             } else if (diskLayer == 3) {
-                // Outer torus layer (outer section of standard disk)
+                // Outer torus layer
                 float layer2_outer = disk_r1 + (disk_r2 - disk_r1) * 0.7;
                 float norm_r = (r_radial - layer2_outer) / (disk_r2 - layer2_outer);
                 norm_r = clamp(norm_r, 0.0, 1.0);
                 
-                // Orange to Red gradient for outer layer
-                vec3 torusInner = vec3(1.0, 0.6, 0.1); // Orange
-                vec3 torusOuter = vec3(0.8, 0.2, 0.0); // Dark red
+                // Apply color gradient for outer layer
+                vec3 torusInner = vec3(1.0, 0.6, 0.1);
+                vec3 torusOuter = vec3(0.8, 0.2, 0.0);
                 diskColor = mix(torusInner, torusOuter, norm_r);
                 
-                // Clumpier structure in outer torus
+                // Add structural variations to outer torus
                 float clumping = sin(time * 0.8 + r_radial * 0.05) * cos(time * 1.2 + r_radial * 0.03);
                 diskColor *= (1.0 + clumping * diskTurbulence * 0.5);
                 
@@ -553,116 +530,116 @@ void main() {
         }
         
         if (diskLayer == 1 || (enableMultiLayerDisk < 0.5)) {
-            // Standard disk or inner hot layer
+            // Process standard disk or inner hot layer
             float r1 = disk_r1;
             float r2 = disk_r2;
             
             float norm_r = (r_radial - r1) / (r2 - r1);
             norm_r = clamp(norm_r, 0.0, 1.0);
             
-            // Simple temperature-based color for now
+            // Apply temperature-based coloring
             if (diskTempPeak > 5e6) {
-                // QUASAR MODE: Red inner to yellow to orange to red outer
-                vec3 innerRed = vec3(1.0, 0.1, 0.0);    // Inner: Red
-                vec3 yellow = vec3(1.0, 1.0, 0.2);      // Yellow
-                vec3 orange = vec3(1.0, 0.6, 0.1);      // Orange  
-                vec3 outerRed = vec3(0.8, 0.2, 0.0);    // Outer: Darker red
+                // Quasar mode color progression
+                vec3 innerRed = vec3(1.0, 0.1, 0.0);
+                vec3 yellow = vec3(1.0, 1.0, 0.2);
+                vec3 orange = vec3(1.0, 0.6, 0.1);
+                vec3 outerRed = vec3(0.8, 0.2, 0.0);
                 
                 if (norm_r < 0.33) {
-                    // Inner third: Red to Yellow
+                    // Inner region color transition
                     float t = norm_r / 0.33;
                     diskColor = mix(innerRed, yellow, t);
                 } else if (norm_r < 0.66) {
-                    // Middle third: Yellow to Orange
+                    // Middle region color transition
                     float t = (norm_r - 0.33) / 0.33;
                     diskColor = mix(yellow, orange, t);
                 } else {
-                    // Outer third: Orange to Red
+                    // Outer region color transition
                     float t = (norm_r - 0.66) / 0.34;
                     diskColor = mix(orange, outerRed, t);
                 }
             } else {
-                // DEFAULT MODE: White-hot inner to bluish-white outer
+                // Default mode color scheme
                 diskColor = mix(vec3(0.85, 0.9, 1.0), vec3(1.0, 1.0, 1.0), norm_r);
             }
             
             opacity = 0.9;
         }
         
-        // Phase 3: Enhanced rotation and relativistic effects
+        // Apply relativistic rotation and Doppler effects
         if (diskRotationSpeed > 0.0 && enableDopplerBeaming > 0.5) {
-            // Calculate orbital velocity at this radius (Keplerian)
-            float kepler_v = sqrt(SagA_rs * 1.5e8 / r_radial); // Approximately sqrt(GM/r)
-            float beta = kepler_v / 3e8; // v/c
+            // Calculate Keplerian orbital velocity
+            float kepler_v = sqrt(SagA_rs * 1.5e8 / r_radial);
+            float beta = kepler_v / 3e8;
             
-            // Get azimuthal angle from hit position
+            // Calculate azimuthal position angle
             float phi = atan(hitPos.z, hitPos.x);
             
-            // Calculate Doppler shift due to disk rotation
-            // Approaching side (phi~0) blue-shifted, receding side (phi~π) red-shifted
+            // Compute relativistic Doppler shift
+            // Apply directional Doppler shift
             float dopplerFactor = sqrt((1.0 + beta * cos(phi)) / (1.0 - beta * cos(phi)));
             
-            // Apply spectral shift - affects all color channels differently
-            diskColor.r *= pow(dopplerFactor, -0.5); // Red responds less
-            diskColor.g *= pow(dopplerFactor, -0.3); // Green moderate
-            diskColor.b *= pow(dopplerFactor, 0.2);  // Blue responds most
+            // Apply wavelength-dependent spectral shift
+            diskColor.r *= pow(dopplerFactor, -0.5);
+            diskColor.g *= pow(dopplerFactor, -0.3);
+            diskColor.b *= pow(dopplerFactor, 0.2);
             
-            // Add rotational brightness asymmetry
+            // Apply rotational brightness variation
             float brightness_boost = 1.0 + 0.3 * cos(phi) * beta * diskRotationSpeed;
             diskColor *= brightness_boost;
         }
         
-        // Phase 2: Apply gravitational redshift and Kerr effects
-        if (r_radial > SagA_rs * 1.1) { // Avoid singularity near event horizon
+        // Apply gravitational redshift and general relativistic effects
+        if (r_radial > SagA_rs * 1.1) {
             float gravRedshift = sqrt(1.0 - SagA_rs / r_radial);
             
-            // Enhanced gravitational redshift with proper physics
-            // Light loses energy climbing out of gravitational well
+            // Calculate gravitational redshift
+            // Compute energy loss from gravitational well
             float redshift_z = (1.0 / gravRedshift) - 1.0;
             
-            // Apply spectral shifts based on redshift
-            diskColor.r *= (1.0 + redshift_z * 0.4); // Redder closer to black hole  
-            diskColor.g *= (1.0 + redshift_z * 0.1); // Green less affected
-            diskColor.b *= (1.0 - redshift_z * 0.3); // Blue suppressed near BH
+            // Apply redshift to color spectrum
+            diskColor.r *= (1.0 + redshift_z * 0.4);
+            diskColor.g *= (1.0 + redshift_z * 0.1);
+            diskColor.b *= (1.0 - redshift_z * 0.3);
             
-            // Time dilation affects emission rate (dimmer near black hole)
+            // Apply time dilation effects on brightness
             float time_dilation = gravRedshift;
             diskColor *= 0.7 + 0.3 * time_dilation;
         }
         
-        // DRAMATIC Kerr black hole effects for spinning black holes
+        // Apply Kerr metric effects for rotating black holes
         if (enableKerrMetric > 0.5 && spinParameter > 0.1) {
-            // Frame dragging effects (Lense-Thirring precession)
+            // Calculate frame-dragging effects
             float dragging_factor = spinParameter / (r_radial / SagA_rs);
             dragging_factor = clamp(dragging_factor, 0.0, 1.0);
             
-            // Asymmetric emission due to frame dragging
+            // Apply asymmetric emission from frame dragging
             float phi = atan(hitPos.z, hitPos.x);
             float asymmetry = sin(phi + time * dragging_factor * 0.5) * dragging_factor;
             diskColor *= (1.0 + asymmetry * 0.2);
             
-            // Enhanced accretion efficiency near spinning black hole
-            if (r_radial < SagA_rs * 6.0) { // Within ISCO region
+            // Increase efficiency near rotating black hole
+            if (r_radial < SagA_rs * 6.0) {
                 diskColor *= 1.0 + dragging_factor * 0.5;
             }
         }
         
-        // Apply brightness scaling
+        // Scale overall brightness based on accretion rate
         float brightness = 1.0 + eddingtonFraction * 1.2;
         diskColor *= brightness;
         
-        // Normal disk rendering
+        // Set final disk color and opacity
         color = vec4(diskColor, opacity);
 
     } else if (hitJet) {
-        // This case should no longer be used - jets are now accumulated
+        // Jet intersection handled by accumulation system
         color = vec4(0.0, 0.0, 0.0, 1.0);
 
     } else if (hitBlackHole) {
         color = vec4(0.0, 0.0, 0.0, 1.0);
 
     } else if (hitObject) {
-        // Standard object shading
+        // Apply standard Lambertian shading to objects
         vec3 P = vec3(ray.x, ray.y, ray.z);
         vec3 N = normalize(P - hitCenter);
         vec3 V = normalize(cam.camPos - P);
@@ -676,62 +653,61 @@ void main() {
         color = vec4(0.0);
     }
     
-    // Add accumulated jet energy to any non-black-hole result
+    // Composite accumulated jet energy with existing color
     if (!hitBlackHole && jetAccumulation.a > 0.01) {
-        // Blend accumulated jet energy with existing color
+        // Compute final jet contribution
         float jetAlpha = clamp(jetAccumulation.a * eddingtonFraction, 0.0, 0.95);
         vec3 finalJetColor = jetAccumulation.rgb / max(jetAccumulation.a, 0.001);
         
-        // Alpha blend jets with existing color
+        // Blend jets using alpha composition
         color.rgb = color.rgb * (1.0 - jetAlpha) + finalJetColor * jetAlpha;
         color.a = max(color.a, jetAlpha);
     }
     
-    // Clean rendering - no debug indicators
     
-    // Phase 7: Enhanced tone mapping and color grading
+    // Apply tone mapping and color grading
     if (color.a > 0.0) {
         vec3 hdrColor = color.rgb;
         
-        // HDR exposure control based on scene brightness
+        // Adjust exposure based on scene luminance
         float avgBrightness = (hdrColor.r + hdrColor.g + hdrColor.b) / 3.0;
         float exposureAdjust = 1.0;
         if (avgBrightness > 2.0) {
-            exposureAdjust = 0.7; // Reduce exposure for very bright sources
+            exposureAdjust = 0.7;
         } else if (avgBrightness < 0.1) {
-            exposureAdjust = 1.3; // Boost exposure for dim sources
+            exposureAdjust = 1.3;
         }
         hdrColor *= exposureAdjust;
         
-        // Advanced filmic tone mapping (ACES approximation)
+        // Apply ACES filmic tone mapping
         vec3 tonemapped = (hdrColor * (2.51 * hdrColor + 0.03)) / 
                          (hdrColor * (2.43 * hdrColor + 0.59) + 0.14);
         
-        // Physically accurate gamma correction
+        // Apply gamma correction
         tonemapped = pow(tonemapped, vec3(1.0 / 2.2));
         
-        // Enhanced color grading based on astrophysical accuracy
+        // Apply astrophysically accurate color grading
         if (diskTempPeak > 5e6) {
-            // Quasar mode: enhance high-energy colors
-            tonemapped.b *= 1.15; // Boost blue for high-energy emission
-            tonemapped.r *= 0.95;  // Slightly reduce red dominance
+            // Enhance high-energy emission colors for quasar mode
+            tonemapped.b *= 1.15;
+            tonemapped.r *= 0.95;
         } else {
-            // Standard mode: natural stellar colors
-            tonemapped.r *= 1.05;  // Warm stellar emission
-            tonemapped.b *= 0.98;  // Reduce blue excess
+            // Apply natural stellar emission colors
+            tonemapped.r *= 1.05;
+            tonemapped.b *= 0.98;
         }
         
-        // Adaptive contrast based on scene content
+        // Apply adaptive contrast enhancement
         float contrast = 1.1;
         if (enableKerrMetric > 0.5) {
-            contrast = 1.2; // Higher contrast for complex relativistic effects
+            contrast = 1.2;
         }
         tonemapped = (tonemapped - 0.5) * contrast + 0.5;
         
-        // Final validation and clamping
+        // Clamp values to valid range
         tonemapped = clamp(tonemapped, 0.0, 1.0);
         
-        // Subtle vignetting for cinematic effect (very light)
+        // Apply subtle vignetting effect
         vec2 uv = vec2(pix) / vec2(WIDTH, HEIGHT);
         vec2 center = uv - 0.5;
         float vignette = 1.0 - dot(center, center) * 0.3;

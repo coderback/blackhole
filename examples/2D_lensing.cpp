@@ -19,7 +19,6 @@ double G = 6.67430e-11;
 struct Ray;
 void rk4Step(Ray& ray, double dλ, double rs);
 
-// --- Structs --- //
 struct Engine {
     GLFWwindow* window;
     int WIDTH = 800;
@@ -27,7 +26,7 @@ struct Engine {
     float width = 100000000000.0f; // Width of the viewport in meters
     float height = 75000000000.0f; // Height of the viewport in meters
 
-    // Navigation state
+    // Mouse navigation variables
     float offsetX = 0.0f, offsetY = 0.0f;
     float zoom = 1.0f;
     bool middleMousePressed = false;
@@ -89,15 +88,15 @@ struct BlackHole {
         glEnd();
     }
 };
-BlackHole SagA(vec3(0.0f, 0.0f, 0.0f), 8.54e36); // Sagittarius A black hole
+BlackHole SagA(vec3(0.0f, 0.0f, 0.0f), 8.54e36);
 struct Ray{
-    // -- cartesian coords -- //
+    // Cartesian coordinates
     double x;   double y;
-    // -- polar coords -- //
+    // Polar coordinates
     double r;   double phi;
     double dr;  double dphi;
-    vector<vec2> trail; // trail of points
-    double E, L;             // conserved quantities
+    vector<vec2> trail;
+    double E, L;
 
     Ray(vec2 pos, vec2 dir) : x(pos.x), y(pos.y), r(sqrt(pos.x * pos.x + pos.y * pos.y)), phi(atan2(pos.y, pos.x)), dr(dir.x), dphi(dir.y) {
         // step 1) get polar coords (r, phi) :

@@ -18,7 +18,7 @@ using namespace glm;
 using namespace std;
 using Clock = std::chrono::high_resolution_clock;
 
-// VARS
+// Global variables
 double lastPrintTime = 0.0;
 int    framesCount   = 0;
 double c = 299792458.0;
@@ -35,10 +35,10 @@ struct Camera {
     bool panning = false;
     double lastX = 0, lastY = 0;
 
-    // Adjustable speeds
+    // Camera control speeds
     float orbitSpeed = 0.008f;
     float panSpeed = 0.001f;
-    float zoomSpeed = 1.08f; // closer to 1 = slower zoom
+    float zoomSpeed = 1.08f;
 
     Camera() : azimuth(0), elevation(M_PI / 2.0f), radius(6.34194e10), fovY(60.0f) {
         target = vec3(0, 0, 0);
@@ -53,12 +53,12 @@ struct Camera {
     void processMouse(GLFWwindow* window, double xpos, double ypos) {
         float dx = float(xpos - lastX), dy = float(ypos - lastY);
         if (dragging && !panning) {
-            // Orbit
+            // Orbital camera movement
             azimuth   -= dx * orbitSpeed;
             elevation -= dy * orbitSpeed;
             elevation = glm::clamp(elevation, 0.01f, float(M_PI)-0.01f);
         } else if (panning) {
-            // Pan (move target in camera plane)
+            // Pan camera target in view plane
             vec3 forward = normalize(target - pos);
             vec3 right = normalize(cross(forward, vec3(0,1,0)));
             vec3 up = cross(right, forward);
