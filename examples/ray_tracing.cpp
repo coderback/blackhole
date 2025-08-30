@@ -8,37 +8,41 @@
 #include <cmath>
 using namespace glm;
 
-// Global variables
+// Application window dimensions
 const int WIDTH = 800;
 const int HEIGHT = 600;
 
-
-// Core application classes
+// Basic ray tracing engine framework
 class Engine{
 public:
-    // Quad rendering components
-    GLFWwindow* window;
-    GLuint quadVAO;
-    GLuint texture;
-    GLuint shaderProgram;
+    // OpenGL rendering resources
+    GLFWwindow* window;      // Application window handle
+    GLuint quadVAO;          // Vertex array for fullscreen quad
+    GLuint texture;          // Render target texture
+    GLuint shaderProgram;    // Shader program for final display
 
+    // Initialize OpenGL context and rendering resources
     Engine(){
-        this->window = StartGLFW();
-        this->shaderProgram = CreateShaderProgram();
+        this->window = StartGLFW();           // Create window and OpenGL context
+        this->shaderProgram = CreateShaderProgram();  // Compile display shaders
         
+        // Set up fullscreen quad for rendering
         auto result = QuadVAO();
-        this->quadVAO = result[0];
-        this->texture = result[1];
+        this->quadVAO = result[0];   // Vertex array object
+        this->texture = result[1];   // Output texture
     }
+    // Initialize GLFW window and OpenGL context
     GLFWwindow* StartGLFW(){
         if(!glfwInit()){
-            std::cerr<<"glfw failed init, PANIC PANIC!"<<std::endl;
+            std::cerr<<"Failed to initialize GLFW"<<std::endl;
             return nullptr;
         }
 
-        GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "ray tracer", NULL, NULL);
+        // Create window for ray tracing visualization
+        GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "Ray Tracing Framework", NULL, NULL);
         glfwMakeContextCurrent(window);
         
+        // Initialize OpenGL extension loader
         glewExperimental = GL_TRUE;
         if (glewInit() != GLEW_OK) {
             std::cerr << "Failed to initialize GLEW." << std::endl;

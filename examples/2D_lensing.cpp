@@ -13,24 +13,29 @@
 using namespace glm;
 using namespace std;
 
-double c = 299792458.0;
-double G = 6.67430e-11;
+// Physical constants
+double c = 299792458.0;  // Speed of light (m/s)
+double G = 6.67430e-11;  // Gravitational constant (m³/kg·s²)
 
+// Forward declarations
 struct Ray;
 void rk4Step(Ray& ray, double dλ, double rs);
 
+// 2D visualization engine for gravitational lensing effects
 struct Engine {
-    GLFWwindow* window;
-    int WIDTH = 800;
-    int HEIGHT = 600;
-    float width = 100000000000.0f; // Width of the viewport in meters
-    float height = 75000000000.0f; // Height of the viewport in meters
+    GLFWwindow* window;    // GLFW window handle
+    int WIDTH = 800;       // Window width in pixels
+    int HEIGHT = 600;      // Window height in pixels
+    
+    // Viewport dimensions in physical units (meters)
+    float width = 100000000000.0f;   // 100 billion meters
+    float height = 75000000000.0f;   // 75 billion meters
 
-    // Mouse navigation variables
-    float offsetX = 0.0f, offsetY = 0.0f;
-    float zoom = 1.0f;
-    bool middleMousePressed = false;
-    double lastMouseX = 0.0, lastMouseY = 0;
+    // Camera/viewport navigation state
+    float offsetX = 0.0f, offsetY = 0.0f;  // Pan offset in meters
+    float zoom = 1.0f;                     // Zoom factor
+    bool middleMousePressed = false;        // Mouse interaction state
+    double lastMouseX = 0.0, lastMouseY = 0.0;  // Previous mouse position
 
     Engine() {
         if (!glfwInit()) {
@@ -54,49 +59,68 @@ struct Engine {
         glViewport(0, 0, WIDTH, HEIGHT);;
     }
 
+    // Set up 2D orthographic projection for physics visualization
     void run() {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        
+        // Configure orthographic projection matrix
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
+        
+        // Calculate viewport bounds with pan offset
         double left   = -width + offsetX;
         double right  =  width + offsetX;
         double bottom = -height + offsetY;
         double top    =  height + offsetY;
+        
+        // Set up 2D coordinate system in physical units (meters)
         glOrtho(left, right, bottom, top, -1.0, 1.0);
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
     }
 };
 Engine engine;
+// Black hole representation for 2D lensing visualization
 struct BlackHole {
-    vec3 position;
-    double mass;
-    double radius;
-    double r_s;
+    vec3 position;    // Position in 3D space
+    double mass;      // Mass in kilograms
+    double radius;    // Physical radius (unused)
+    double r_s;       // Schwarzschild radius (event horizon)
 
-    BlackHole(vec3 pos, float m) : position(pos), mass(m) {r_s = 2.0 * G * mass / (c*c);}
+    BlackHole(vec3 pos, float m) : position(pos), mass(m) {
+        r_s = 2.0 * G * mass / (c*c);  // Calculate event horizon radius
+    }
+    
+    // Render black hole as red circle at event horizon scale
     void draw() {
         glBegin(GL_TRIANGLE_FAN);
-        glColor3f(1.0f, 0.0f, 0.0f);               // Red color for the black hole
-        glVertex2f(0.0f, 0.0f);                    // Center
+        glColor3f(1.0f, 0.0f, 0.0f);  // Red color for visibility
+        glVertex2f(0.0f, 0.0f);       // Center point
+        
+        // Draw circle with radius equal to Schwarzschild radius
         for(int i = 0; i <= 100; i++) {
             float angle = 2.0f * M_PI * i / 100;
-            float x = r_s * cos(angle); // Radius of 0.1
+            float x = r_s * cos(angle);
             float y = r_s * sin(angle);
             glVertex2f(x, y);
         }
         glEnd();
     }
 };
-BlackHole SagA(vec3(0.0f, 0.0f, 0.0f), 8.54e36);
+
+// Sagittarius A* - our galaxy's supermassive black hole
+BlackHole SagA(vec3(0.0f, 0.0f, 0.0f), 8.54e36);  // Mass: ~4.3 million solar masses
+// Light ray structure for geodesic integration in 2D
 struct Ray{
-    // Cartesian coordinates
-    double x;   double y;
-    // Polar coordinates
-    double r;   double phi;
-    double dr;  double dphi;
-    vector<vec2> trail;
-    double E, L;
+    // Position coordinates
+    double x;   double y;     // Cartesian position (meters)
+    double r;   double phi;   // Polar coordinates (r in meters, phi in radians)
+    
+    // Velocity components (derivatives with respect to affine parameter)
+    double dr;  double dphi;  // Radial and angular velocities
+    
+    vector<vec2> trail;       // Path history for visualization
+    double E, L;              // Conserved energy and angular momentum
 
     Ray(vec2 pos, vec2 dir) : x(pos.x), y(pos.y), r(sqrt(pos.x * pos.x + pos.y * pos.y)), phi(atan2(pos.y, pos.x)), dr(dir.x), dphi(dir.y) {
         // step 1) get polar coords (r, phi) :

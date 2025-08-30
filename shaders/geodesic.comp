@@ -1,107 +1,130 @@
 #version 430
+// Use 16x16 work groups for optimal GPU performance
 layout(local_size_x = 16, local_size_y = 16) in;
 
+// Output image for ray traced results
 layout(binding = 0, rgba8) writeonly uniform image2D outImage;
+
+// Camera parameters for ray generation
 layout(std140, binding = 1) uniform Camera {
-    vec3 camPos;     float _pad0;
-    vec3 camRight;   float _pad1;
-    vec3 camUp;      float _pad2;
-    vec3 camForward; float _pad3;
-    float tanHalfFov;
-    float aspect;
-    bool moving;
-    int   _pad4;
+    vec3 camPos;     float _pad0;    // Camera position in world space
+    vec3 camRight;   float _pad1;    // Camera right vector
+    vec3 camUp;      float _pad2;    // Camera up vector  
+    vec3 camForward; float _pad3;    // Camera forward direction
+    float tanHalfFov;                // Tangent of half field-of-view angle
+    float aspect;                    // Aspect ratio (width/height)
+    bool moving;                     // Whether camera is currently moving
+    int   _pad4;                     // Padding for alignment
 } cam;
 
+// Accretion disk geometry parameters
 layout(std140, binding = 2) uniform Disk {
-    float disk_r1;
-    float disk_r2;
-    float disk_num;
-    float thickness;
+    float disk_r1;      // Inner disk radius (Schwarzschild radii)
+    float disk_r2;      // Outer disk radius
+    float disk_num;     // Disk density parameter
+    float thickness;    // Disk vertical thickness
 };
 
+// Scene objects (reference spheres, masses)
 layout(std140, binding = 3) uniform Objects {
-    int numObjects;
-    vec4 objPosRadius[16];
-    vec4 objColor[16];
-    float  mass[16]; 
+    int numObjects;              // Number of objects in scene
+    vec4 objPosRadius[16];       // Position (xyz) and radius (w)
+    vec4 objColor[16];           // RGBA color values
+    float  mass[16];             // Mass in kilograms
 };
 
+// Physics simulation toggles and parameters
 layout(std140, binding = 4) uniform Features {
-    float eddingtonFraction;
-    float diskTempPeak;
-    float lensingBoost;
-    float enableMultiLayerDisk;
-    float maxRaySteps;
-    float diskRotationSpeed;
-    float diskTurbulence;
-    float enableDopplerBeaming;
-    float enableKerrMetric;
-    float spinParameter;
-    float enableJets;
-    float jetOpeningAngle;
-    float jetBrightness;
-    float time;
+    float eddingtonFraction;     // Accretion rate (fraction of Eddington limit)
+    float diskTempPeak;          // Peak disk temperature (Kelvin)
+    float lensingBoost;          // Gravitational lensing enhancement
+    float enableMultiLayerDisk;  // Multi-zone disk structure toggle
+    float maxRaySteps;           // Maximum ray integration steps
+    float diskRotationSpeed;     // Keplerian rotation multiplier
+    float diskTurbulence;        // Turbulence strength
+    float enableDopplerBeaming;  // Relativistic Doppler effects toggle
+    float enableKerrMetric;      // Kerr (rotating) vs Schwarzschild metric
+    float spinParameter;         // Black hole spin parameter (a/M)
+    float enableJets;            // Relativistic jet emission toggle
+    float jetOpeningAngle;       // Jet cone half-angle (degrees)
+    float jetBrightness;         // Jet emission brightness multiplier
+    float time;                  // Simulation time for animations
 };
 
-const float SagA_rs = 1.269e10;
-const float D_LAMBDA = 1e7;
-const double ESCAPE_R = 1e30;
+// Physical constants and simulation parameters
+const float SagA_rs = 1.269e10;    // Schwarzschild radius of Sgr A* (meters)
+const float D_LAMBDA = 1e7;        // Ray integration step size (meters)
+const double ESCAPE_R = 1e30;      // Escape radius - rays beyond this are considered escaped
 
-// Boyer-Lindquist Kerr metric components in dimensionless units
+// Kerr metric functions for rotating black hole spacetime
+// Uses Boyer-Lindquist coordinates in dimensionless units (M=1)
+
+// Delta function: Δ = r² - 2r + a²
 float kerrDelta(float r, float a) {
-    // Kerr metric delta function
     return r*r - 2.0*r + a*a;
 }
 
+// Sigma function: Σ = r² + a²cos²θ  
 float kerrSigma(float r, float theta, float a) {
-    // Kerr metric sigma function
     float cosTheta = cos(theta);
     return r*r + a*a*cosTheta*cosTheta;
 }
 
-// Kerr metric tensor components
+// Kerr metric tensor components in Boyer-Lindquist coordinates
+// ds² = gₜₜdt² + gᵣᵣdr² + gₘₘdθ² + gᵩᵩdφ² + 2gₜᵩdtdφ
+
+// Time-time component: gₜₜ = -(1 - 2r/Σ)
 float kerrG_tt(float r, float theta, float a) {
     float sigma = kerrSigma(r, theta, a);
     return -(1.0 - 2.0*r/sigma);
 }
 
+// Radial component: gᵣᵣ = Σ/Δ
 float kerrG_rr(float r, float theta, float a) {
     float sigma = kerrSigma(r, theta, a);
     float delta = kerrDelta(r, a);
-    return sigma / (delta + 1e-6);
+    return sigma / (delta + 1e-6);  // Small epsilon prevents division by zero
 }
 
+// Polar component: gₘₘ = Σ
 float kerrG_thetatheta(float r, float theta, float a) {
     return kerrSigma(r, theta, a);
 }
 
+// Azimuthal component: gᵩᵩ = sin²θ[(r²+a²)Σ + 2a²r sin²θ]/Σ
 float kerrG_phiphi(float r, float theta, float a) {
     float sigma = kerrSigma(r, theta, a);
     float sin2Theta = sin(theta) * sin(theta);
     return sin2Theta * ((r*r + a*a)*sigma + 2.0*a*a*r*sin2Theta) / sigma;
 }
 
+// Cross term: gₜᵩ = -2ar sin²θ/Σ (frame dragging)
 float kerrG_tphi(float r, float theta, float a) {
     float sigma = kerrSigma(r, theta, a);
     float sin2Theta = sin(theta) * sin(theta);
     return -2.0*a*r*sin2Theta / sigma;
 }
 
-// Calculate innermost stable circular orbit for Kerr black hole
+// Calculate innermost stable circular orbit (ISCO) radius for Kerr metric
+// This is the closest stable orbit around a rotating black hole
 float kerrISCO(float a) {
     float dimensionlessSpin = a / (SagA_rs / 2.0);
+    
+    // Bardeen-Press-Teukolsky formula for ISCO calculation
     float Z1 = 1.0 + pow(1.0 - dimensionlessSpin*dimensionlessSpin, 1.0/3.0) * 
                (pow(1.0 + dimensionlessSpin, 1.0/3.0) + pow(1.0 - dimensionlessSpin, 1.0/3.0));
     float Z2 = sqrt(3.0*dimensionlessSpin*dimensionlessSpin + Z1*Z1);
     
+    // Sign depends on prograde (+) or retrograde (-) rotation
     float sign = (dimensionlessSpin >= 0.0) ? 1.0 : -1.0;
     return (SagA_rs / 2.0) * (3.0 + Z2 + sign * sqrt((3.0 - Z1) * (3.0 + Z1 + 2.0*Z2)));
 }
 
-// Determine if position is within ergosphere boundary
+// Check if position is within the ergosphere (static limit)
+// Inside the ergosphere, no observer can remain stationary relative to distant stars
 bool inErgosphere(float r, float theta, float a) {
     float cosTheta = cos(theta);
+    // Ergosphere boundary: r = M + √(M² - a²cos²θ)
     float ergosurface = 1.0 + sqrt(1.0 - a*a*cosTheta*cosTheta);
     return r < ergosurface;
 }
@@ -126,40 +149,50 @@ float kerrThetaPotential(float theta, float E, float L, float Q, float a) {
     return Q - cos2Theta * (a*a*(E*E - 1.0) + L*L/sin2Theta);
 }
 
-// Global variables for intersection tracking
-vec4 objectColor = vec4(0.0);
-vec3 hitCenter = vec3(0.0);
-float hitRadius = 0.0;
+// Global variables for tracking ray-object intersections
+vec4 objectColor = vec4(0.0);  // Color of intersected object
+vec3 hitCenter = vec3(0.0);    // Center position of hit object
+float hitRadius = 0.0;         // Radius of hit object
 
+// Ray structure for geodesic integration in curved spacetime
 struct Ray {
-    float x, y, z, r, theta, phi;
-    float dr, dtheta, dphi;
-    float E, L, Q;
+    float x, y, z;           // Cartesian coordinates (m)
+    float r, theta, phi;     // Spherical coordinates (r in m, angles in rad)
+    float dr, dtheta, dphi;  // Coordinate derivatives with respect to affine parameter
+    float E, L, Q;           // Conserved quantities: energy, angular momentum, Carter constant
 };
+
+// Initialize ray from camera position and direction
 Ray initRay(vec3 pos, vec3 dir) {
     Ray ray;
+    
+    // Store Cartesian position
     ray.x = pos.x; ray.y = pos.y; ray.z = pos.z;
+    
+    // Convert to spherical coordinates
     ray.r = length(pos);
-    ray.theta = acos(pos.z / ray.r);
-    ray.phi = atan(pos.y, pos.x);
+    ray.theta = acos(pos.z / ray.r);  // Polar angle from z-axis
+    ray.phi = atan(pos.y, pos.x);     // Azimuthal angle in x-y plane
 
+    // Transform direction vector to spherical coordinate derivatives
     float dx = dir.x, dy = dir.y, dz = dir.z;
     ray.dr     = sin(ray.theta)*cos(ray.phi)*dx + sin(ray.theta)*sin(ray.phi)*dy + cos(ray.theta)*dz;
     ray.dtheta = (cos(ray.theta)*cos(ray.phi)*dx + cos(ray.theta)*sin(ray.phi)*dy - sin(ray.theta)*dz) / ray.r;
     ray.dphi   = (-sin(ray.phi)*dx + cos(ray.phi)*dy) / (ray.r * sin(ray.theta));
 
+    // Calculate conserved angular momentum L = r²sin²θ(dφ/dλ)
     ray.L = ray.r * ray.r * sin(ray.theta) * ray.dphi;
     
-    // Initialize conserved quantities based on metric type
+    // Initialize conserved energy based on metric type
     if (enableKerrMetric > 0.5) {
-        // Kerr metric initialization
+        // For Kerr metric: more complex initialization needed
         float f = 1.0 - SagA_rs / ray.r;
         float dt_dL = sqrt((ray.dr*ray.dr)/f + ray.r*ray.r*(ray.dtheta*ray.dtheta + sin(ray.theta)*sin(ray.theta)*ray.dphi*ray.dphi));
         ray.E = f * dt_dL;
-        ray.Q = 0.0;
+        ray.Q = 0.0;  // Carter constant (simplified for equatorial rays)
         
     } else {
-        // Schwarzschild metric initialization
+        // For Schwarzschild metric: energy E = (1-rs/r)(dt/dλ)
         float f = 1.0 - SagA_rs / ray.r;
         float dt_dL = sqrt((ray.dr*ray.dr)/f + ray.r*ray.r*(ray.dtheta*ray.dtheta + sin(ray.theta)*sin(ray.theta)*ray.dphi*ray.dphi));
         ray.E = f * dt_dL;
@@ -169,97 +202,114 @@ Ray initRay(vec3 pos, vec3 dir) {
     return ray;
 }
 
+// Test if ray has crossed the event horizon
 bool intercept(Ray ray, float rs) {
     if (enableKerrMetric > 0.5) {
-        // Calculate Kerr event horizon radius
-        float M = 1.0;
+        // Kerr event horizon: r+ = M + sqrt(M² - a²)
+        float M = 1.0;  // Mass in natural units
         float a = spinParameter;
         float r_horizon = M + sqrt(max(M*M - a*a, 0.0));
         
+        // Convert to physical units
         float r_horizon_phys = r_horizon * (SagA_rs / 2.0);
         return ray.r <= r_horizon_phys;
     } else {
+        // Schwarzschild event horizon: rs = 2GM/c²
         return ray.r <= rs;
     }
 }
-// Test ray intersection with scene objects
+// Test if ray intersects any scene objects (reference spheres)
 bool interceptObject(Ray ray) {
-    vec3 P = vec3(ray.x, ray.y, ray.z);
+    vec3 P = vec3(ray.x, ray.y, ray.z);  // Current ray position
+    
+    // Check intersection with each object in the scene
     for (int i = 0; i < numObjects; ++i) {
-        vec3 center = objPosRadius[i].xyz;
-        float radius = objPosRadius[i].w;
-        float objMass = mass[i];
+        vec3 center = objPosRadius[i].xyz;  // Object center position
+        float radius = objPosRadius[i].w;   // Object radius
+        float objMass = mass[i];            // Object mass (for future use)
         
-        bool hit = false;
-        
-        // Test spherical intersection
-        hit = distance(P, center) <= radius;
+        // Simple spherical intersection test
+        bool hit = distance(P, center) <= radius;
         
         if (hit) {
+            // Store intersection data for shading
             objectColor = objColor[i];
             hitCenter = center;
             hitRadius = radius;
             return true;
         }
     }
-    return false;
+    return false;  // No intersection found
 }
 
+// Schwarzschild geodesic equations: d²x/dλ² = -Γ(dx/dλ)(dx/dλ)
 void geodesicRHS(Ray ray, out vec3 d1, out vec3 d2) {
     float r = ray.r, theta = ray.theta;
     float dr = ray.dr, dtheta = ray.dtheta, dphi = ray.dphi;
+    
+    // Metric coefficient: f(r) = 1 - rs/r
     float f = 1.0 - SagA_rs / r;
-    float dt_dL = ray.E / f;
+    float dt_dL = ray.E / f;  // Time coordinate derivative
 
+    // First derivatives (velocities)
     d1 = vec3(dr, dtheta, dphi);
-    d2.x = - (SagA_rs / (2.0 * r*r)) * f * dt_dL * dt_dL
-         + (SagA_rs / (2.0 * r*r * f)) * dr * dr
-         + r * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi);
+    
+    // Second derivatives (accelerations from Christoffel symbols)
+    // Radial acceleration
+    d2.x = - (SagA_rs / (2.0 * r*r)) * f * dt_dL * dt_dL      // Gravitational attraction
+         + (SagA_rs / (2.0 * r*r * f)) * dr * dr              // Radial kinetic correction
+         + r * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi); // Centrifugal forces
+    
+    // Polar angle acceleration
     d2.y = -2.0*dr*dtheta/r + sin(theta)*cos(theta)*dphi*dphi;
+    
+    // Azimuthal acceleration (with cot θ term)
     d2.z = -2.0*dr*dphi/r - 2.0*cos(theta)/(sin(theta)) * dtheta * dphi;
 }
 
-// Kerr geodesic equations with numerical stability
+// Kerr geodesic equations with frame-dragging effects
 void geodesicRHS_Kerr(Ray ray, out vec3 d1, out vec3 d2) {
     float r = ray.r, theta = ray.theta;
     float dr = ray.dr, dtheta = ray.dtheta, dphi = ray.dphi;
     float E = ray.E, L = ray.L;
     
-    // Apply numerical stability constraints
-    r = max(r, SagA_rs * 0.5);
-    theta = clamp(theta, 0.01, 3.14159 - 0.01);
+    // Apply numerical stability limits to prevent singularities
+    r = max(r, SagA_rs * 0.5);               // Stay outside event horizon
+    theta = clamp(theta, 0.01, 3.14159 - 0.01); // Avoid polar singularities
     
-    // Base Schwarzschild geodesic computation
+    // Start with Schwarzschild baseline
     float f = 1.0 - SagA_rs / r;
-    f = max(f, 0.01);
+    f = max(f, 0.01);  // Prevent division by zero
     float dt_dL = E / f;
     
     d1 = vec3(dr, dtheta, dphi);
     
-    d2.x = - (SagA_rs / (2.0 * r*r)) * f * dt_dL * dt_dL
-         + (SagA_rs / (2.0 * r*r * f)) * dr * dr
-         + r * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi);
+    // Base Schwarzschild accelerations
+    d2.x = - (SagA_rs / (2.0 * r*r)) * f * dt_dL * dt_dL   // Time dilation effect
+         + (SagA_rs / (2.0 * r*r * f)) * dr * dr           // Radial correction
+         + r * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi); // Angular momentum
     
     d2.y = -2.0*dr*dtheta/r + sin(theta)*cos(theta)*dphi*dphi;
     
-    // Compute cotangent with singularity protection
+    // Azimuthal acceleration with cotangent singularity protection
     float sinTheta = sin(theta);
     float cotTheta = (abs(sinTheta) > 0.01) ? cos(theta)/sinTheta : 0.0;
     d2.z = -2.0*dr*dphi/r - 2.0*cotTheta * dtheta * dphi;
     
-    // Apply frame-dragging corrections for Kerr metric
+    // Add Kerr-specific frame-dragging corrections
     if (spinParameter > 0.01) {
-        float a = spinParameter * 0.2;
+        float a = spinParameter * 0.2;  // Scaled spin parameter
         float sin2Theta = sinTheta * sinTheta;
         
-        // Apply frame-dragging effect
+        // Frame-dragging becomes significant outside ergosphere
         if (r > SagA_rs * 2.0) {
+            // Lense-Thirring precession effect: Ω ∝ a/r³
             float frame_drag = 0.1 * a * SagA_rs / (r * r * r);
             d2.z += frame_drag * sin2Theta * E;
         }
     }
     
-    // Limit acceleration values for numerical stability
+    // Clamp accelerations to maintain numerical stability
     d2.x = clamp(d2.x, -1e6, 1e6);
     d2.y = clamp(d2.y, -1e6, 1e6); 
     d2.z = clamp(d2.z, -1e6, 1e6);

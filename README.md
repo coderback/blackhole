@@ -151,26 +151,8 @@ Where:
 - **Δ = r² - 2Mr + a²**: Radial metric function
 - **a**: Angular momentum parameter (spin)
 
-### Validated Against:
-- **Event Horizon Telescope** observations of M87* and Sgr A*
-- **Numerical relativity** simulations
-- **Observational data** from X-ray binaries and AGN
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
 ## Acknowledgments
 
-- **Event Horizon Telescope Collaboration** for black hole imaging
-- **Einstein Toolkit** for numerical relativity methods
-- **OpenGL Community** for compute shader techniques
-- **GLM Mathematics Library** for efficient vector operations
-
-## References
-
-1. Misner, C. W., Thorne, K. S., & Wheeler, J. A. (1973). *Gravitation*. W. H. Freeman.
-2. Chandrasekhar, S. (1992). *The Mathematical Theory of Black Holes*. Oxford University Press.  
-3. Event Horizon Telescope Collaboration (2019). First M87 Event Horizon Telescope Results. *Astrophysical Journal Letters*.
-4. Luminet, J. P. (1979). Image of a spherical black hole with thin accretion disk. *Astronomy and Astrophysics*.
-5. Noble, S. C. et al. (2007). Simulating the emission and outflows from accretion disks. *Classical and Quantum Gravity*.
+- [rossning92/Blackhole](https://github.com/rossning92/Blackhole): OpenGL and C++ black hole simulation framework, providing shader-based visualization and reference implementation of Schwarzschild geodesics.
+- [kavan010/black_hole](https://github.com/kavan010/black_hole): C++ GPU-accelerated ray tracing of black holes, with implementations for gravitational lensing and accretion disk rendering.
+- [20k.github.io Schwarzschild Tutorial](https://20k.github.io/c++/2024/05/31/schwarzschild.html): Educational series bridging general relativity and C++ implementation, with detailed coverage of geodesics, coordinate systems, and GPU acceleration.

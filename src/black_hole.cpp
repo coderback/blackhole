@@ -20,37 +20,46 @@ using namespace glm;
 using namespace std;
 using Clock = std::chrono::high_resolution_clock;
 
-// Global variables
+// Performance monitoring variables
 double lastPrintTime = 0.0;
 int    framesCount   = 0;
-double c = 299792458.0;
-double G = 6.67430e-11;
+
+// Physical constants
+double c = 299792458.0;  // Speed of light (m/s)
+double G = 6.67430e-11;  // Gravitational constant (m³/kg·s²)
+
+// Forward declarations and simulation state
 struct Ray;
-bool Gravity = false;
+bool Gravity = false;  // Controls whether gravitational forces affect test objects
 
 struct Camera {
-    // Orbital camera centered on black hole
-    vec3 target = vec3(0.0f, 0.0f, 0.0f);
-    float radius = 6.34194e10f;
-    float minRadius = 1e10f, maxRadius = 1e12f;
+    // Camera positioning - maintains orbital view around black hole center
+    vec3 target = vec3(0.0f, 0.0f, 0.0f);  // Always focused on black hole
+    float radius = 6.34194e10f;             // Distance from black hole (meters)
+    float minRadius = 1e10f, maxRadius = 1e12f;  // Zoom limits
 
-    float azimuth = 0.0f;
-    float elevation = M_PI / 2.0f;
+    // Spherical coordinates for orbital motion
+    float azimuth = 0.0f;      // Horizontal rotation angle
+    float elevation = M_PI / 2.0f;  // Vertical angle from pole
 
-    float orbitSpeed = 0.01f;
-    float panSpeed = 0.01f;
-    double zoomSpeed = 25e9f;
+    // User interaction sensitivity settings
+    float orbitSpeed = 0.01f;   // Mouse sensitivity for orbital movement
+    float panSpeed = 0.01f;     // Pan speed (currently unused)
+    double zoomSpeed = 25e9f;   // Mouse wheel zoom sensitivity
 
-    bool dragging = false;
-    bool panning = false;
-    bool moving = false;
-    bool firstMouse = true;
-    double lastX = 0.0, lastY = 0.0;
+    // Input state tracking
+    bool dragging = false;      // Left mouse button held
+    bool panning = false;       // Middle mouse button held (unused)
+    bool moving = false;        // Camera is currently being moved
+    bool firstMouse = true;     // First mouse movement detection
+    double lastX = 0.0, lastY = 0.0;  // Previous mouse position
 
-    // Calculate camera position in world space
+    // Convert spherical coordinates to Cartesian world position
     vec3 position() const {
+        // Prevent singularities at poles by clamping elevation
         float clampedElevation = glm::clamp(elevation, 0.01f, float(M_PI) - 0.01f);
-        // Orbit around (0,0,0) always
+        
+        // Standard spherical to Cartesian conversion
         return vec3(
             radius * sin(clampedElevation) * cos(azimuth),
             radius * cos(clampedElevation),
@@ -58,22 +67,23 @@ struct Camera {
         );
     }
     void update() {
-        // Maintain focus on black hole center
+        // Ensure camera always focuses on black hole at origin
         target = vec3(0.0f, 0.0f, 0.0f);
         
+        // Track movement state for adaptive rendering quality
         static double lastMoveTime = 0.0;
         if(dragging | panning) {
             moving = true;
             lastMoveTime = glfwGetTime();
         } else {
-            // Delay before enabling high quality rendering
+            // Wait 200ms after movement stops before enabling high quality
             double timeSinceMove = glfwGetTime() - lastMoveTime;
             moving = timeSinceMove < 0.2;
         }
     }
 
     void processMouseMove(double x, double y) {
-        // Initialize mouse tracking on first movement
+        // Skip processing if not dragging or on first mouse event
         if (firstMouse || !dragging) {
             lastX = x;
             lastY = y;
@@ -81,21 +91,20 @@ struct Camera {
             return;
         }
         
+        // Calculate mouse movement delta with bounds checking
         float dx = float(x - lastX);
         float dy = float(y - lastY);
-        
-        // Clamp mouse delta to prevent large jumps
-        dx = glm::clamp(dx, -100.0f, 100.0f);
+        dx = glm::clamp(dx, -100.0f, 100.0f);  // Prevent jumps from alt-tab, etc.
         dy = glm::clamp(dy, -100.0f, 100.0f);
 
         if (dragging && panning) {
-            // Panning disabled to maintain black hole focus
+            // Panning intentionally disabled to maintain black hole-centered view
         }
         else if (dragging && !panning) {
-            // Standard orbital movement
-            azimuth   += dx * orbitSpeed;
-            elevation -= dy * orbitSpeed;
-            elevation = glm::clamp(elevation, 0.01f, float(M_PI) - 0.01f);
+            // Apply orbital rotation based on mouse movement
+            azimuth   += dx * orbitSpeed;  // Horizontal rotation
+            elevation -= dy * orbitSpeed;  // Vertical rotation (inverted for natural feel)
+            elevation = glm::clamp(elevation, 0.01f, float(M_PI) - 0.01f);  // Prevent flipping
         }
 
         lastX = x;
@@ -115,11 +124,12 @@ struct Camera {
                 panning = false;
             }
         }
+        // Right mouse button toggles gravity simulation for test objects
         if (button == GLFW_MOUSE_BUTTON_RIGHT) {
             if (action == GLFW_PRESS) {
-                Gravity = true;
+                Gravity = true;   // Enable N-body gravitational simulation
             } else if (action == GLFW_RELEASE) {
-                Gravity = false;
+                Gravity = false;  // Freeze object positions
             }
         }
     }
@@ -133,20 +143,23 @@ struct Camera {
             Gravity = !Gravity;
             cout << "[INFO] Gravity turned " << (Gravity ? "ON" : "OFF") << endl;
         }
-        // Additional key handling implemented below
+        // Other key handling is implemented in handleFeatureKeys() function
     }
 };
 Camera camera;
 
 struct BlackHole {
-    vec3 position;
-    double mass;
-    double radius;
-    double r_s;
+    vec3 position;   // Location in 3D space
+    double mass;     // Mass in kilograms
+    double radius;   // Physical radius (unused in current implementation)
+    double r_s;      // Schwarzschild radius (event horizon)
 
     BlackHole(vec3 pos, float m) : position(pos), mass(m) {
+        // Calculate Schwarzschild radius: rs = 2GM/c²
         r_s = 2.0 * G * mass / (c*c);
     }
+    
+    // Test if a point is within the event horizon
     bool Intercept(float px, float py, float pz) const {
         double dx = double(px) - double(position.x);
         double dy = double(py) - double(position.y);
@@ -157,33 +170,35 @@ struct BlackHole {
 };
 
 enum class FeatureProfile { STANDARD, TON618_QUASAR };
+
+// Configuration system for different black hole simulation modes
 struct QuasarFeatures {
     FeatureProfile profile = FeatureProfile::STANDARD;
-    float eddingtonFraction = 0.1f;    // Standard Sgr A*: low activity
-    float diskTempPeak = 1e6f;         // Standard: cooler disk
-    float lensingBoost = 1.0f;         // Always physically accurate
-    bool enableMultiLayerDisk = false;
+    float eddingtonFraction = 0.1f;    // Fraction of Eddington luminosity (accretion rate)
+    float diskTempPeak = 1e6f;         // Peak disk temperature in Kelvin
+    float lensingBoost = 1.0f;         // Gravitational lensing enhancement factor
+    bool enableMultiLayerDisk = false; // Multi-layer accretion disk structure
     
-    // Performance settings
+    // Rendering quality and performance settings
     enum class QualityPreset { LOW, MEDIUM, HIGH, ULTRA };
     QualityPreset quality = QualityPreset::MEDIUM;
-    float renderScale = 0.85f;      // Resolution multiplier
-    int maxRaySteps = 64000;        // Adaptive based on quality
-    bool halfResVolumetrics = true; // For jets/disk
+    float renderScale = 0.85f;      // Resolution scaling factor
+    int maxRaySteps = 64000;        // Maximum ray tracing steps
+    bool halfResVolumetrics = true; // Reduce resolution for volumetric effects
     
-    // Rotation and dynamics
-    float diskRotationSpeed = 0.0f; // Rotation speed multiplier
-    float diskTurbulence = 0.0f;    // Turbulence/chaos factor
-    bool enableDopplerBeaming = false; // Relativistic Doppler effects
+    // Accretion disk dynamics
+    float diskRotationSpeed = 0.0f;     // Keplerian rotation speed multiplier
+    float diskTurbulence = 0.0f;        // Magnetorotational instability strength
+    bool enableDopplerBeaming = false;   // Relativistic Doppler shift effects
     
-    // New relativistic parameters
-    bool enableKerrMetric = false;  // Enable Kerr black hole effects
-    float spinParameter = 0.0f;     // Black hole spin (0.0 = Schwarzschild, 0.998 = maximum)
+    // General relativity parameters
+    bool enableKerrMetric = false;      // Use rotating (Kerr) vs static (Schwarzschild) metric
+    float spinParameter = 0.0f;         // Dimensionless spin: a/M (0.0-0.998)
     
-    // Jet parameters
-    bool enableJets = false;        // Enable relativistic jets
-    float jetOpeningAngle = 5.0f;   // Jet opening angle in degrees
-    float jetBrightness = 1.0f;     // Jet brightness multiplier
+    // Relativistic jet parameters
+    bool enableJets = false;            // Enable bipolar jet emission
+    float jetOpeningAngle = 5.0f;       // Half-angle of jet cone in degrees
+    float jetBrightness = 1.0f;         // Synchrotron emission intensity
     
     // Enhanced jet parameters
     float jetHelixPitch = 0.0f;        // Helical twist parameter (0 = no helix)
@@ -213,19 +228,20 @@ struct QuasarFeatures {
     float qpoAmplitude = 0.0f;          // QPO brightness modulation amplitude
     float diskWindStrength = 0.0f;      // Disk wind opacity effects
     
+    // Configure simulation for TON618-type supermassive quasar
     void switchToTON618() {
         profile = FeatureProfile::TON618_QUASAR;
-        eddingtonFraction = 0.7f;      // Active quasar: high accretion
-        diskTempPeak = 1e7f;           // Hot, bright disk
-        enableMultiLayerDisk = true;
-        diskRotationSpeed = 2.0f;      // Fast rotation like active quasar
-        diskTurbulence = 0.3f;         // Chaotic accretion patterns
-        enableDopplerBeaming = true;   // Relativistic effects
-        enableKerrMetric = true;       // Enable rotating black hole physics
-        spinParameter = 0.8f;          // High spin parameter for active quasar
-        enableJets = true;             // Enable relativistic jets
-        jetOpeningAngle = 6.0f;        // Slightly wider jets for quasar
-        jetBrightness = 2.0f;          // Brighter jets for active system
+        eddingtonFraction = 0.7f;      // High accretion rate (70% of Eddington limit)
+        diskTempPeak = 1e7f;           // Very hot disk (10 million K)
+        enableMultiLayerDisk = true;   // Complex multi-zone disk structure
+        diskRotationSpeed = 2.0f;      // Rapid Keplerian rotation
+        diskTurbulence = 0.3f;         // Strong MRI turbulence
+        enableDopplerBeaming = true;   // Relativistic beaming effects
+        enableKerrMetric = true;       // Rapidly rotating black hole
+        spinParameter = 0.8f;          // High spin (a/M = 0.8)
+        enableJets = true;             // Powerful relativistic jets
+        jetOpeningAngle = 6.0f;        // Wider jet opening angle
+        jetBrightness = 2.0f;          // Enhanced synchrotron emission
         
         // Enhanced jet physics for TON618
         jetHelixPitch = 5e11f;         // Helical structure with 500 billion meter pitch
@@ -258,19 +274,20 @@ struct QuasarFeatures {
         cout << "[INFO] Switched to TON618 Quasar: full enhanced physics enabled!" << endl;
     }
     
+    // Configure simulation for Sagittarius A*-type galactic center black hole
     void switchToStandard() {
         profile = FeatureProfile::STANDARD;
-        eddingtonFraction = 0.1f;
-        diskTempPeak = 1e6f;
-        enableMultiLayerDisk = false;
-        diskRotationSpeed = 0.1f;      // Slow, stable rotation
-        diskTurbulence = 0.05f;        // Minimal turbulence
-        enableDopplerBeaming = false;  // No relativistic effects
-        enableKerrMetric = false;      // Classic Schwarzschild (non-rotating)
-        spinParameter = 0.0f;          // No spin
-        enableJets = false;            // No jets in standard mode
-        jetOpeningAngle = 5.0f;        // Default values
-        jetBrightness = 1.0f;          // Default values
+        eddingtonFraction = 0.1f;        // Low accretion rate (10% of Eddington)
+        diskTempPeak = 1e6f;            // Moderate disk temperature (1 million K)
+        enableMultiLayerDisk = false;    // Simple single-zone disk
+        diskRotationSpeed = 0.1f;        // Slow, stable Keplerian rotation
+        diskTurbulence = 0.05f;         // Weak turbulence
+        enableDopplerBeaming = false;    // Minimal relativistic effects
+        enableKerrMetric = false;        // Non-rotating Schwarzschild metric
+        spinParameter = 0.0f;           // Zero angular momentum
+        enableJets = false;             // No significant jet emission
+        jetOpeningAngle = 5.0f;         // Default parameters
+        jetBrightness = 1.0f;           // Standard emission
         
         // Reset enhanced parameters to standard values
         jetHelixPitch = 0.0f;          // No helical structure
@@ -341,57 +358,69 @@ struct QuasarFeatures {
 };
 
 
-BlackHole SagA(vec3(0.0f, 0.0f, 0.0f), 8.54e36);
-QuasarFeatures features;
+// Sagittarius A* - our galaxy's central supermassive black hole
+BlackHole SagA(vec3(0.0f, 0.0f, 0.0f), 8.54e36);  // Mass: 4.3 million solar masses
+QuasarFeatures features;  // Global simulation configuration
 
+// Data structure for renderable objects in the simulation
 struct ObjectData {
-    vec4 posRadius; // xyz = position, w = radius
-    vec4 color;     // rgb = color, a = unused
-    float  mass;
-    vec3 velocity = vec3(0.0f, 0.0f, 0.0f);
+    vec4 posRadius; // xyz = position (m), w = radius (m)
+    vec4 color;     // rgba color values
+    float  mass;    // Mass in kilograms
+    vec3 velocity = vec3(0.0f, 0.0f, 0.0f);  // Velocity vector (m/s)
 };
-vector<ObjectData> objects;
+vector<ObjectData> objects;  // Collection of all scene objects
 
-// Update object configuration based on current simulation mode
+// Initialize scene objects for visualization and physics simulation
 void updateObjects() {
-    // Initialize base object set
     objects.clear();
     
-    // Add reference spheres for spatial orientation
+    // Add reference spheres to help visualize scale and orientation
+    // Yellow sphere at +X axis (400 billion meters from center)
     objects.push_back({ vec4(4e11f, 0.0f, 0.0f, 4e10f), vec4(1,1,0,1), 1.98892e30 });
+    // Red sphere at +Z axis  
     objects.push_back({ vec4(0.0f, 0.0f, 4e11f, 4e10f), vec4(1,0,0,1), 1.98892e30 });
     
-    // Add black hole mass for spacetime curvature visualization
+    // Add invisible mass point representing the central black hole
+    // This contributes to spacetime curvature calculations in the grid
     objects.push_back({ 
-        vec4(0.0f, 0.0f, 0.0f, 0.1f),
-        vec4(0,0,0,0),
-        static_cast<float>(SagA.mass)
+        vec4(0.0f, 0.0f, 0.0f, 0.1f),  // Tiny radius (effectively invisible)
+        vec4(0,0,0,0),                  // Transparent
+        static_cast<float>(SagA.mass)   // Full black hole mass
     });
-    
 }
 
+// Main rendering and simulation engine
 struct Engine {
-    GLuint gridShaderProgram;
-    GLFWwindow* window;
-    GLuint quadVAO;
-    GLuint texture;
-    GLuint shaderProgram;
-    GLuint computeProgram = 0;
-    GLuint cameraUBO = 0;
-    GLuint diskUBO = 0;
-    GLuint objectsUBO = 0;
-    GLuint featuresUBO = 0;
-    GLuint gridVAO = 0;
-    GLuint gridVBO = 0;
-    GLuint gridEBO = 0;
-    int gridIndexCount = 0;
+    // OpenGL rendering resources
+    GLuint gridShaderProgram;   // Shader for spacetime grid visualization
+    GLFWwindow* window;         // Main application window
+    GLuint quadVAO;            // Vertex array for fullscreen quad
+    GLuint texture;            // Render target for compute shader
+    GLuint shaderProgram;      // Fragment shader for final display
+    GLuint computeProgram = 0; // GPU compute shader for ray tracing
+    
+    // Uniform buffer objects for GPU data
+    GLuint cameraUBO = 0;      // Camera parameters
+    GLuint diskUBO = 0;        // Accretion disk properties
+    GLuint objectsUBO = 0;     // Scene object data
+    GLuint featuresUBO = 0;    // Physics feature toggles
+    
+    // Grid rendering resources
+    GLuint gridVAO = 0;        // Vertex array for spacetime grid
+    GLuint gridVBO = 0;        // Vertex buffer
+    GLuint gridEBO = 0;        // Element buffer for grid lines
+    int gridIndexCount = 0;    // Number of grid line indices
 
-    int WIDTH = 800;
-    int HEIGHT = 600;
-    int COMPUTE_WIDTH  = 200;
-    int COMPUTE_HEIGHT = 150;
-    float width = 100000000000.0f;
-    float height = 75000000000.0f;
+    // Window and compute dimensions
+    int WIDTH = 800;           // Display window width
+    int HEIGHT = 600;          // Display window height
+    int COMPUTE_WIDTH  = 200;  // Ray tracing resolution width
+    int COMPUTE_HEIGHT = 150;  // Ray tracing resolution height
+    
+    // Viewport dimensions in physical units (meters)
+    float width = 100000000000.0f;   // 100 billion meters
+    float height = 75000000000.0f;   // 75 billion meters
     
     Engine() {
         if (!glfwInit()) {
@@ -418,70 +447,78 @@ struct Engine {
             exit(EXIT_FAILURE);
         }
         cout << "OpenGL " << glGetString(GL_VERSION) << "\n";
-        this->shaderProgram = CreateShaderProgram();
-        gridShaderProgram = CreateShaderProgram("grid.vert", "grid.frag");
-
-        computeProgram = CreateComputeProgram("geodesic.comp");
+        
+        // Initialize all shader programs
+        this->shaderProgram = CreateShaderProgram();  // Default quad renderer
+        gridShaderProgram = CreateShaderProgram("grid.vert", "grid.frag");  // Grid visualization
+        computeProgram = CreateComputeProgram("geodesic.comp");  // Main ray tracing
+        
+        // Set up uniform buffer objects for efficient GPU data transfer
         glGenBuffers(1, &cameraUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
-        glBufferData(GL_UNIFORM_BUFFER, 128, nullptr, GL_DYNAMIC_DRAW); // alloc ~128 bytes
-        glBindBufferBase(GL_UNIFORM_BUFFER, 1, cameraUBO); // binding = 1 matches shader
+        glBufferData(GL_UNIFORM_BUFFER, 128, nullptr, GL_DYNAMIC_DRAW);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 1, cameraUBO);  // Matches binding=1 in compute shader
 
+        // Accretion disk parameters buffer
         glGenBuffers(1, &diskUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, diskUBO);
-        glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 4, nullptr, GL_DYNAMIC_DRAW); // 3 values + 1 padding
-        glBindBufferBase(GL_UNIFORM_BUFFER, 2, diskUBO); // binding = 2 matches compute shader
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 4, nullptr, GL_DYNAMIC_DRAW);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 2, diskUBO);
 
+        // Scene objects buffer (supports up to 16 objects)
         glGenBuffers(1, &objectsUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, objectsUBO);
-        // allocate space for 16 objects: 
-        // sizeof(int) + padding + 16×(vec4 posRadius + vec4 color)
-        GLsizeiptr objUBOSize = sizeof(int) + 3 * sizeof(float)
-            + 16 * (sizeof(vec4) + sizeof(vec4))
-            + 16 * sizeof(float); // 16 floats for mass
+        GLsizeiptr objUBOSize = sizeof(int) + 3 * sizeof(float)    // Count + padding
+            + 16 * (sizeof(vec4) + sizeof(vec4))  // Position/radius + color per object
+            + 16 * sizeof(float);                 // Mass per object
         glBufferData(GL_UNIFORM_BUFFER, objUBOSize, nullptr, GL_DYNAMIC_DRAW);
-        glBindBufferBase(GL_UNIFORM_BUFFER, 3, objectsUBO);  // binding = 3 matches shader
+        glBindBufferBase(GL_UNIFORM_BUFFER, 3, objectsUBO);
 
+        // Physics features configuration buffer
         glGenBuffers(1, &featuresUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, featuresUBO);
-        glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 33, nullptr, GL_DYNAMIC_DRAW); // features data (33 parameters)
-        glBindBufferBase(GL_UNIFORM_BUFFER, 4, featuresUBO); // binding = 4 for features
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 33, nullptr, GL_DYNAMIC_DRAW);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 4, featuresUBO);
 
         auto result = QuadVAO();
         this->quadVAO = result[0];
         this->texture = result[1];
     }
+    // Generate 3D grid that visualizes spacetime curvature around massive objects
     void generateGrid(const vector<ObjectData>& objects) {
-        const int gridSize = 25;
-        const float spacing = 1e10f;  // tweak this
+        const int gridSize = 25;        // 25x25 grid points
+        const float spacing = 1e10f;    // 10 billion meters between grid lines
 
         vector<vec3> vertices;
         vector<GLuint> indices;
 
+        // Generate grid vertices with curvature effects
         for (int z = 0; z <= gridSize; ++z) {
             for (int x = 0; x <= gridSize; ++x) {
+                // Convert grid coordinates to world space
                 float worldX = (x - gridSize / 2) * spacing;
                 float worldZ = (z - gridSize / 2) * spacing;
 
-                float y = 0.0f;
+                float y = 0.0f;  // Start at flat spacetime
 
-                // Apply Schwarzschild metric to grid geometry
+                // Apply gravitational curvature from all massive objects
                 for (const auto& obj : objects) {
                     vec3 objPos = vec3(obj.posRadius);
                     double mass = obj.mass;
-                    double radius = obj.posRadius.w;
-
+                    
+                    // Calculate Schwarzschild radius and distance to object
                     double r_s = 2.0 * G * mass / (c * c);
                     double dx = worldX - objPos.x;
                     double dz = worldZ - objPos.z;
                     double dist = sqrt(dx * dx + dz * dz);
 
-                    // Prevent numerical instability near event horizon
+                    // Apply curvature formula with numerical stability
                     if (dist > r_s) {
+                        // Approximate spacetime curvature as vertical displacement
                         double deltaY = 2.0 * sqrt(r_s * (dist - r_s));
-                        y += static_cast<float>(deltaY) - 3e10f;
+                        y += static_cast<float>(deltaY) - 3e10f;  // Offset for visibility
                     } else {
-                        // Handle points at or inside Schwarzschild radius
+                        // Handle points near or inside event horizon
                         y += 2.0f * static_cast<float>(sqrt(r_s * r_s)) - 3e10f;
                     }
                 }
@@ -490,36 +527,40 @@ struct Engine {
             }
         }
 
-        // Generate line indices for wireframe rendering
+        // Create line indices for wireframe rendering
+        // Connect each grid point to its neighbors (right and down)
         for (int z = 0; z < gridSize; ++z) {
             for (int x = 0; x < gridSize; ++x) {
                 int i = z * (gridSize + 1) + x;
+                // Horizontal line to next point
                 indices.push_back(i);
                 indices.push_back(i + 1);
-
+                // Vertical line to point below
                 indices.push_back(i);
                 indices.push_back(i + gridSize + 1);
             }
         }
 
-        // Upload mesh data to GPU buffers
+        // Upload geometry to GPU
         if (gridVAO == 0) glGenVertexArrays(1, &gridVAO);
         if (gridVBO == 0) glGenBuffers(1, &gridVBO);
         if (gridEBO == 0) glGenBuffers(1, &gridEBO);
 
         glBindVertexArray(gridVAO);
 
+        // Upload vertex positions
         glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
         glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(vec3), vertices.data(), GL_DYNAMIC_DRAW);
 
+        // Upload line indices
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gridEBO);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint), indices.data(), GL_STATIC_DRAW);
 
+        // Configure vertex attributes
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vec3), (void*)0);
 
         gridIndexCount = indices.size();
-
         glBindVertexArray(0);
     }
     void drawGrid(const mat4& viewProj) {
