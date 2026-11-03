@@ -47,7 +47,7 @@ const PROFILES = {
 const state = {
   profile: PHONE ? 'standard' : 'ton618',
   ...(PHONE ? PROFILES.standard : PROFILES.ton618),
-  corrected: false,
+  corrected: true,
   stars: true,
   quality: PHONE ? 'low' : 'medium',
   autoRes: true,
