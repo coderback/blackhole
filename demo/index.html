@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Black Hole: geodesic ray tracing in WebGL2</title>
+<meta name="description" content="A WebGL2 port of a C++/OpenGL black hole simulation. Light rays are integrated through curved spacetime in a fragment shader, with an orbit camera, accretion disk, jets and a Schwarzschild and Kerr mode switch.">
+<meta name="color-scheme" content="light dark">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="wrap top">
+  <h1>Black Hole</h1>
+  <p class="lede">Light rays integrated through curved spacetime, once per pixel, in your GPU. This is a WebGL port of the C++/OpenGL version, which uses compute shaders that browsers do not offer. Drag to orbit, scroll or pinch to zoom.</p>
+</header>
+
+<main>
+  <section class="stage-grid wrap" aria-label="Simulation">
+    <div class="stage">
+      <canvas id="view" tabindex="0" role="img" aria-label="Real-time rendering of a black hole with an accretion disk. Arrow keys orbit, plus and minus zoom."></canvas>
+      <p id="status" class="status" role="status" hidden></p>
+      <p id="hud" class="hud" aria-live="off"></p>
+    </div>
+
+    <form class="panel" aria-label="Simulation controls" onsubmit="return false">
+      <fieldset class="seg">
+        <legend>Mode <kbd>Q</kbd></legend>
+        <button type="button" data-profile="standard" aria-pressed="false">Sgr A* standard</button>
+        <button type="button" data-profile="ton618" aria-pressed="false">TON618 quasar</button>
+      </fieldset>
+      <fieldset class="seg">
+        <legend>Metric <kbd>K</kbd></legend>
+        <button type="button" data-metric="schwarzschild" aria-pressed="false">Schwarzschild</button>
+        <button type="button" data-metric="kerr" aria-pressed="false">Kerr</button>
+      </fieldset>
+      <label class="slider">Spin a/M <output id="spin-out" for="spin">0.00</output>
+        <input id="spin" type="range" min="0" max="0.998" step="0.002" value="0">
+      </label>
+      <label class="slider">Distance
+        <input id="zoom" type="range" step="0.01" value="2.77">
+      </label>
+      <label class="slider">Quality <kbd>1</kbd>–<kbd>4</kbd>
+        <select id="quality">
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="ultra">Ultra</option>
+        </select>
+      </label>
+      <div class="checks">
+        <label><input id="jets" type="checkbox"> Jets <kbd>J</kbd></label>
+        <label><input id="multi" type="checkbox"> Multi-layer disk <kbd>M</kbd></label>
+        <label><input id="doppler" type="checkbox"> Doppler colour term <kbd>R</kbd></label>
+        <label><input id="autores" type="checkbox"> Hold 30 fps by lowering resolution</label>
+        <label><input id="stars" type="checkbox"> Starfield (added for the web)</label>
+        <label><input id="corrected" type="checkbox"> Corrected radial term (see below)</label>
+      </div>
+    </form>
+  </section>
+
+  <div class="wrap prose">
+    <p class="source"><a href="https://github.com/coderback/blackhole">Source on GitHub</a> <a href="https://github.com/coderback/blackhole/tree/live-demo/demo">This WebGL port</a></p>
+
+    <h2>How it works</h2>
+    <p>Every pixel fires a ray from the camera and steps it along the Schwarzschild geodesic equations in spherical coordinates, written as first-order equations in the coordinates and their derivatives. Each step checks for the event horizon, the two reference spheres, the jet cones and a crossing of the disk plane. The equations, disk and jet colouring, tone mapping and feature presets come straight from <code>shaders/geodesic.comp</code> and <code>src/black_hole.cpp</code>. Everything runs live in your browser, with no saved frames.</p>
+
+    <h2>What changed in the port</h2>
+    <p>Each difference is marked in the comments of <a href="https://github.com/coderback/blackhole/blob/live-demo/demo/geodesic.frag"><code>geodesic.frag</code></a>.</p>
+    <ul>
+      <li><strong>Compute to fragment.</strong> WebGL2 has no compute shaders, so the ray tracer runs in a fragment shader over a full-screen triangle.</li>
+      <li><strong>Integrator.</strong> The C++ function named <code>rk4Step</code> takes one forward Euler step of 10<sup>7</sup> m (about 0.0008 r<sub>s</sub>) per iteration, with a budget of 32,000 to 256,000 iterations per ray. The port integrates the same right-hand sides with true fourth-order Runge-Kutta, at a step proportional to r that shrinks near r<sub>s</sub>, in 90 to 450 steps depending on quality.</li>
+      <li><strong>Per-ray frame.</strong> Each ray gets a polar axis perpendicular to its starting plane. The equations are unchanged by the rotation, and it keeps long steps away from the singularity at the coordinate pole.</li>
+      <li><strong>Jet sampling.</strong> Jet brightness is scaled by step length so it adds up the same along a path. One time-varying jet term moved about 1000 radians per C++ step, which averages to a constant, so the port uses that constant.</li>
+      <li><strong>Starfield.</strong> Added here so the bending of light is visible. The C++ leaves escaped rays black.</li>
+      <li><strong>Left out.</strong> The test-object gravity mode (right mouse button) and the spacetime grid mesh.</li>
+    </ul>
+
+    <h2>How the port was checked</h2>
+    <p>A script (<a href="https://github.com/coderback/blackhole/blob/live-demo/demo/test/geodesic.mjs"><code>demo/test/geodesic.mjs</code></a>) runs the original Euler integration in double precision and compares it with the port's integrator, for rays that start 50 r<sub>s</sub> from the hole and run until they fall in or pass 60 r<sub>s</sub> on the way out:</p>
+    <div class="table-wrap">
+      <table>
+        <caption>Results with the C++ equations (port at step factor k = 0.13)</caption>
+        <thead><tr><th scope="col">Quantity</th><th scope="col">C++ integration</th><th scope="col">Port</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Shadow edge, impact parameter</th><td>1.7454 r<sub>s</sub>, about 66,600 steps for a ray there</td><td>1.7437 r<sub>s</sub>, 84 steps</td></tr>
+          <tr><th scope="row">Deflection at b = 3 r<sub>s</sub></th><td>0.3557 rad in 140,257 steps</td><td>0.3554 rad in 58 steps</td></tr>
+          <tr><th scope="row">Deflection at b = 10 r<sub>s</sub></th><td>0.0727 rad in 139,038 steps</td><td>0.0727 rad in 38 steps</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Physics limits, stated plainly</h2>
+    <ul>
+      <li><strong>The radial equation.</strong> The C++ radial equation ends in <code>r * (dθ² + sin²θ dφ²)</code>. The Schwarzschild Christoffel symbol gives <code>(r − r<sub>s</sub>) * (...)</code>. As written, light bends about a third as much as general relativity predicts: 0.0340 rad against 0.1063 rad with the corrected term at b = 20 r<sub>s</sub> over the same path, and a shadow edge near 1.74 r<sub>s</sub> rather than the analytic 2.60 r<sub>s</sub> (the corrected term gives 2.58 r<sub>s</sub> from this starting distance). The page opens with the equations as written in the C++. The checkbox applies the correction so you can compare.</li>
+      <li><strong>Kerr mode is not a full Kerr solution.</strong> It keeps the Schwarzschild equations, uses the Kerr formula for the horizon radius, and adds a small Lense-Thirring style term to the azimuthal acceleration about the z axis, while the disk lies in the y = 0 plane. It also makes the disk emission asymmetric. The Kerr metric functions in the GLSL are not used by the integration. The shadow barely changes with spin.</li>
+      <li><strong>The Doppler term is nearly invisible.</strong> It is ported as written. Its velocity works out near β ≈ 10<sup>−5</sup>, and it follows a fixed world direction rather than the viewer, so toggling it shows almost no change.</li>
+      <li><strong>Colours are artistic gradients.</strong> The disk uses colour ramps with redshift-style scaling, not radiative transfer, and the disk is a flat plane that stops a ray on contact. The temperature value only selects a ramp.</li>
+      <li><strong>TON618 mode is a feature preset.</strong> It changes the disk and jet settings. The mass and r<sub>s</sub> stay those of Sgr A*, as in the C++.</li>
+    </ul>
+
+    <h2>Credits</h2>
+    <p>This project builds on <a href="https://github.com/kavan010/black_hole">kavan010/black_hole</a>. Its README also acknowledges <a href="https://github.com/rossning92/Blackhole">rossning92/Blackhole</a> and the <a href="https://20k.github.io/c++/2024/05/31/schwarzschild.html">20k Schwarzschild tutorial</a>.</p>
+  </div>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

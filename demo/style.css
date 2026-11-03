@@ -1,0 +1,67 @@
+:root {
+  --bg: #f4f2ee; --ink: #1b1a18; --muted: #5d5a54; --line: #d5d1c9; --panel: #fbfaf7;
+  --accent: #b4490f; --accent-ink: #ffffff; --chip: #ebe7df;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0a09; --ink: #ece7df; --muted: #a39d92; --line: #2d2a26; --panel: #151310;
+    --accent: #f5a35c; --accent-ink: #1b1208; --chip: #221f1b;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--accent); }
+code, kbd { font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace; font-size: .9em; }
+kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; font-size: .72em; color: var(--muted); }
+.wrap { width: 100%; max-width: 1180px; margin: 0 auto; padding-left: 16px; padding-right: 16px; }
+.top { padding-top: 24px; padding-bottom: 12px; }
+h1 { font-size: clamp(32px, 6vw, 48px); line-height: 1.05; margin: 0 0 8px; letter-spacing: -.02em; }
+h2 { font-size: 21px; line-height: 1.25; margin: 34px 0 10px; }
+.lede { max-width: 72ch; margin: 0; }
+
+.stage-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 14px; align-items: stretch; }
+.stage { position: relative; background: #000; border-radius: 6px; overflow: hidden; min-height: 300px; }
+#view { display: block; width: 100%; height: min(72vh, 680px); touch-action: none; cursor: grab; outline-offset: -2px; }
+#view:active { cursor: grabbing; }
+#view:focus-visible { outline: 2px solid #f5a35c; }
+.hud { position: absolute; left: 10px; bottom: 8px; right: 10px; margin: 0; font: 12px/1.3 ui-monospace, Menlo, Consolas, monospace; color: #e8dfd2; text-shadow: 0 1px 2px #000; pointer-events: none; }
+.status { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; margin: 0; padding: 24px; text-align: center; color: #f0e7da; background: #000; }
+.status[hidden] { display: none; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 12px; font-size: 14px; align-self: start; }
+fieldset { border: 0; margin: 0; padding: 0; }
+legend { padding: 0; margin-bottom: 4px; font-weight: 600; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.seg legend { grid-column: 1 / -1; }
+.seg button { font: inherit; font-size: 13px; line-height: 1.25; color: var(--ink); background: var(--chip); border: 1px solid var(--line); border-radius: 4px; padding: 6px 4px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.slider { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-weight: 600; align-items: center; }
+.slider input, .slider select { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+.slider select { font: inherit; font-weight: 400; padding: 4px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
+.slider output { font-weight: 400; font-variant-numeric: tabular-nums; }
+.checks { display: flex; flex-direction: column; gap: 6px; }
+.checks label { display: flex; gap: 8px; align-items: baseline; line-height: 1.3; }
+.checks input { accent-color: var(--accent); flex: none; }
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.prose { max-width: 780px; margin-left: auto; margin-right: auto; padding-bottom: 48px; }
+.source { margin: 18px 0 0; }
+.source a { margin-right: 16px; }
+.prose ul { padding-left: 20px; }
+.prose li { margin-bottom: 8px; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+caption { text-align: left; color: var(--muted); margin-bottom: 6px; }
+th, td { text-align: left; padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { font-weight: 600; }
+tbody th { font-weight: 400; }
+
+.no-webgl #view { height: 180px; }
+
+@media (max-width: 860px) {
+  .stage-grid { grid-template-columns: minmax(0, 1fr); }
+  #view { height: 58vh; }
+  .checks { font-size: 15px; gap: 10px; }
+  .hud { font-size: 11px; }
+}
