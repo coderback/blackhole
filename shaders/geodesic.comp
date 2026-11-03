@@ -258,7 +258,7 @@ void geodesicRHS(Ray ray, out vec3 d1, out vec3 d2) {
     // Radial acceleration
     d2.x = - (SagA_rs / (2.0 * r*r)) * f * dt_dL * dt_dL      // Gravitational attraction
          + (SagA_rs / (2.0 * r*r * f)) * dr * dr              // Radial kinetic correction
-         + r * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi); // Centrifugal forces
+         + (r - SagA_rs) * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi); // Centrifugal forces
     
     // Polar angle acceleration
     d2.y = -2.0*dr*dtheta/r + sin(theta)*cos(theta)*dphi*dphi;
@@ -287,7 +287,7 @@ void geodesicRHS_Kerr(Ray ray, out vec3 d1, out vec3 d2) {
     // Base Schwarzschild accelerations
     d2.x = - (SagA_rs / (2.0 * r*r)) * f * dt_dL * dt_dL   // Time dilation effect
          + (SagA_rs / (2.0 * r*r * f)) * dr * dr           // Radial correction
-         + r * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi); // Angular momentum
+         + (r - SagA_rs) * (dtheta*dtheta + sin(theta)*sin(theta)*dphi*dphi); // Angular momentum
     
     d2.y = -2.0*dr*dtheta/r + sin(theta)*cos(theta)*dphi*dphi;
     

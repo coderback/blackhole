@@ -385,7 +385,7 @@ void geodesicRHS(const Ray& ray, double rhs[6], double rs) {
     rhs[3] = 
         - (rs / (2 * r * r)) * f * dt_dlambda * dt_dlambda
         + (rs / (2 * r * r * f)) * dr * dr
-        + r * (dtheta * dtheta + sin(theta) * sin(theta) * dphi * dphi);
+        + (r - rs) * (dtheta * dtheta + sin(theta) * sin(theta) * dphi * dphi);
 
     rhs[4] = 
         - (2.0 / r) * dr * dtheta
