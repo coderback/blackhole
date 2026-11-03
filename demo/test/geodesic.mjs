@@ -222,3 +222,6 @@ for (const b of [0.9, 1.0, 1.1, 1.2, 1.3, 1.5, 2, 3, 6]) {
     console.log(`   b=${b.toFixed(2)} tilt=${tilt.toFixed(2)} reference=${ref.captured === null ? 'over' : ref.captured ? 'captured' : refAngle.toFixed(4)} port=${cell} steps=${p.steps}`);
   }
 }
+
+const kerrEdge = captureEdge((b) => { const { pos, dir } = setup(b); return traceReference(pos, dir, (s, E) => rhsKerrReference(s, E, 0.8), 0.8).captured; }, 0.5, 3);
+console.log(`   shadow edge in Kerr mode at spin 0.8, Euler reference: ${kerrEdge.toFixed(4)} rs`);
