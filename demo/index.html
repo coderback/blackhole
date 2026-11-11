@@ -5,26 +5,40 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Black Hole: geodesic ray tracing in WebGL2</title>
 <meta name="description" content="A WebGL2 port of a C++/OpenGL black hole simulation. Light rays are integrated through curved spacetime in a fragment shader, with an orbit camera, accretion disk, jets and a Schwarzschild and Kerr mode switch.">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="wrap top">
-  <h1>Black Hole</h1>
-  <p class="lede">Light rays integrated through curved spacetime, once per pixel, in your GPU. This is a WebGL port of the C++/OpenGL version, which uses compute shaders that browsers do not offer. It opens with one fix to the C++ radial equation, explained below. Drag to orbit, scroll or pinch to zoom.</p>
-</header>
+<a class="skip" href="#controls">Skip to the controls</a>
 
-<main>
-  <section class="stage-grid wrap" aria-label="Simulation">
-    <div class="stage">
-      <canvas id="view" tabindex="0" role="img" aria-label="Real-time rendering of a black hole with an accretion disk. Arrow keys orbit, plus and minus zoom."></canvas>
-      <p id="status" class="status" role="status" hidden></p>
+<header class="hero" aria-label="Black Hole">
+  <div class="stage">
+    <canvas id="view" tabindex="0" role="img" aria-label="Real-time rendering of a black hole with an accretion disk. Drag to orbit, scroll to zoom. Arrow keys orbit, plus and minus zoom."></canvas>
+    <p id="status" class="status" role="status" hidden></p>
+  </div>
+
+  <nav class="top" aria-label="Page">
+    <p class="brand">Black Hole</p>
+    <a class="navlink" href="#how">How it works</a>
+    <a class="navlink" href="#port">The port</a>
+    <a class="navlink" href="#limits">Limits</a>
+    <a class="pill-link" href="https://github.com/coderback/blackhole">Source on GitHub</a>
+  </nav>
+
+  <div class="hero-body">
+    <div class="hero-copy">
+      <h1>Light bent by gravity, once per pixel, on your GPU.</h1>
+      <p class="lede">A WebGL2 port of a C++/OpenGL geodesic ray tracer. Drag to orbit, scroll or pinch to zoom.</p>
       <p id="hud" class="hud" aria-live="off"></p>
     </div>
 
-    <form class="panel" aria-label="Simulation controls" onsubmit="return false">
+    <form id="controls" class="panel" aria-label="Simulation controls" onsubmit="return false">
       <fieldset class="seg">
-        <legend>Mode <kbd>Q</kbd></legend>
+        <legend>Black hole <kbd>Q</kbd></legend>
         <button type="button" data-profile="standard" aria-pressed="false">Sgr A* standard</button>
         <button type="button" data-profile="ton618" aria-pressed="false">TON618 quasar</button>
       </fieldset>
@@ -33,13 +47,13 @@
         <button type="button" data-metric="schwarzschild" aria-pressed="false">Schwarzschild</button>
         <button type="button" data-metric="kerr" aria-pressed="false">Kerr</button>
       </fieldset>
-      <label class="slider">Spin a/M <output id="spin-out" for="spin">0.00</output>
+      <label class="slider"><span class="lab">Spin a/M</span> <output id="spin-out" for="spin">0.00</output>
         <input id="spin" type="range" min="0" max="0.998" step="0.002" value="0">
       </label>
-      <label class="slider">Distance
+      <label class="slider"><span class="lab">Distance</span>
         <input id="zoom" type="range" step="0.01" value="2.77">
       </label>
-      <label class="slider">Quality <kbd>1</kbd>–<kbd>4</kbd>
+      <label class="slider"><span class="lab">Quality <kbd>1</kbd>–<kbd>4</kbd></span>
         <select id="quality">
           <option value="low">Low</option>
           <option value="medium">Medium</option>
@@ -47,35 +61,49 @@
           <option value="ultra">Ultra</option>
         </select>
       </label>
-      <div class="checks">
-        <label><input id="jets" type="checkbox"> Jets <kbd>J</kbd></label>
-        <label><input id="multi" type="checkbox"> Multi-layer disk <kbd>M</kbd></label>
-        <label><input id="doppler" type="checkbox"> Doppler colour term <kbd>R</kbd></label>
-        <label><input id="autores" type="checkbox"> Hold 30 fps by lowering resolution</label>
-        <label><input id="stars" type="checkbox"> Starfield (added for the web)</label>
-        <label><input id="corrected" type="checkbox"> Corrected radial term (see below)</label>
+      <div class="checks" role="group" aria-label="Features">
+        <label class="chip"><input id="jets" type="checkbox"> Jets <kbd>J</kbd></label>
+        <label class="chip"><input id="multi" type="checkbox"> Multi-layer disk <kbd>M</kbd></label>
+        <label class="chip"><input id="doppler" type="checkbox"> Doppler colour term <kbd>R</kbd></label>
+        <label class="chip"><input id="stars" type="checkbox"> Starfield</label>
+        <label class="chip"><input id="corrected" type="checkbox"> Corrected radial term</label>
+        <label class="chip"><input id="autores" type="checkbox"> Hold 30 fps by lowering resolution</label>
       </div>
+      <p class="panel-note">The starfield is added for the web. The corrected term is <a href="#limits">explained below</a>.</p>
     </form>
+  </div>
+</header>
+
+<main>
+  <p class="provenance wrap"><span class="tag">LIVE RENDER</span> Everything runs in your browser, with no saved frames, and the physics shortcuts are listed. <a href="#limits">Physics limits, stated plainly</a></p>
+
+  <section id="how" class="wrap split" aria-labelledby="how-h">
+    <div class="split-text">
+      <h2 id="how-h">How it works</h2>
+      <p>Every pixel fires a ray from the camera and steps it along the Schwarzschild geodesic equations in spherical coordinates, written as first-order equations in the coordinates and their derivatives. Each step checks for the event horizon, the two reference spheres, the jet cones and a crossing of the disk plane. The equations, disk and jet colouring, tone mapping and feature presets come straight from <code>shaders/geodesic.comp</code> and <code>src/black_hole.cpp</code>. Everything runs live in your browser, with no saved frames.</p>
+    </div>
+    <aside class="card feature" aria-label="A fix to the original">
+      <p class="eyebrow">A fix to the original</p>
+      <p class="card-title">The C++ radial equation had a wrong term</p>
+      <p>As written, light bends about a third as much as general relativity predicts. The page opens with the corrected term. Untick <strong>Corrected radial term</strong> in the controls to compare with the equations as written in the C++. <a href="#limits">The details</a></p>
+    </aside>
   </section>
 
-  <div class="wrap prose">
-    <p class="source"><a href="https://github.com/coderback/blackhole">Source on GitHub</a> <a href="https://github.com/coderback/blackhole/tree/live-demo/demo">This WebGL port</a></p>
-
-    <h2>How it works</h2>
-    <p>Every pixel fires a ray from the camera and steps it along the Schwarzschild geodesic equations in spherical coordinates, written as first-order equations in the coordinates and their derivatives. Each step checks for the event horizon, the two reference spheres, the jet cones and a crossing of the disk plane. The equations, disk and jet colouring, tone mapping and feature presets come straight from <code>shaders/geodesic.comp</code> and <code>src/black_hole.cpp</code>. Everything runs live in your browser, with no saved frames.</p>
-
-    <h2>What changed in the port</h2>
-    <p>Each difference is marked in the comments of <a href="https://github.com/coderback/blackhole/blob/live-demo/demo/geodesic.frag"><code>geodesic.frag</code></a>.</p>
-    <ul>
-      <li><strong>Compute to fragment.</strong> WebGL2 has no compute shaders, so the ray tracer runs in a fragment shader over a full-screen triangle.</li>
-      <li><strong>Integrator.</strong> The C++ function named <code>rk4Step</code> takes one forward Euler step of 10<sup>7</sup> m (about 0.0008 r<sub>s</sub>) per iteration, with a budget of 32,000 to 256,000 iterations per ray. The port integrates the same right-hand sides with true fourth-order Runge-Kutta, at a step proportional to r that shrinks near r<sub>s</sub>, in 90 to 450 steps depending on quality.</li>
-      <li><strong>Per-ray frame.</strong> Each ray gets a polar axis perpendicular to its starting plane. The equations are unchanged by the rotation, and it keeps long steps away from the singularity at the coordinate pole.</li>
-      <li><strong>Jet sampling.</strong> Jet brightness is scaled by step length so it adds up the same along a path. One time-varying jet term moved about 1000 radians per C++ step, which averages to a constant, so the port uses that constant.</li>
-      <li><strong>Starfield.</strong> Added here so the bending of light is visible. The C++ leaves escaped rays black.</li>
-      <li><strong>Left out.</strong> The test-object gravity mode (right mouse button) and the spacetime grid mesh.</li>
+  <section id="port" class="wrap" aria-labelledby="port-h">
+    <h2 id="port-h">What changed in the port</h2>
+    <p class="intro">Each difference is marked in the comments of <a href="https://github.com/coderback/blackhole/blob/live-demo/demo/geodesic.frag"><code>geodesic.frag</code></a>.</p>
+    <ul class="cards">
+      <li class="card"><p class="tag-line">COMPUTE → FRAGMENT</p><p class="card-title">Compute to fragment</p><p>WebGL2 has no compute shaders, so the ray tracer runs in a fragment shader over a full-screen triangle.</p></li>
+      <li class="card"><p class="tag-line">INTEGRATOR</p><p class="card-title">True fourth-order Runge-Kutta</p><p>The C++ function named <code>rk4Step</code> takes one forward Euler step of 10<sup>7</sup> m (about 0.0008 r<sub>s</sub>) per iteration, with a budget of 32,000 to 256,000 iterations per ray. The port integrates the same right-hand sides with true fourth-order Runge-Kutta, at a step proportional to r that shrinks near r<sub>s</sub>, in 90 to 450 steps depending on quality.</p></li>
+      <li class="card"><p class="tag-line">PER-RAY FRAME</p><p class="card-title">A polar axis for every ray</p><p>Each ray gets a polar axis perpendicular to its starting plane. The equations are unchanged by the rotation, and it keeps long steps away from the singularity at the coordinate pole.</p></li>
+      <li class="card"><p class="tag-line">JET SAMPLING</p><p class="card-title">Brightness scaled by step length</p><p>Jet brightness is scaled by step length so it adds up the same along a path. One time-varying jet term moved about 1000 radians per C++ step, which averages to a constant, so the port uses that constant.</p></li>
+      <li class="card"><p class="tag-line">ADDED FOR THE WEB</p><p class="card-title">Starfield</p><p>Added here so the bending of light is visible. The C++ leaves escaped rays black.</p></li>
+      <li class="card"><p class="tag-line">LEFT OUT</p><p class="card-title">Two features not ported</p><p>The test-object gravity mode (right mouse button) and the spacetime grid mesh.</p></li>
     </ul>
+  </section>
 
-    <h2>How the port was checked</h2>
+  <section id="checked" class="wrap narrow" aria-labelledby="checked-h">
+    <h2 id="checked-h">How the port was checked</h2>
     <p>A script (<a href="https://github.com/coderback/blackhole/blob/live-demo/demo/test/geodesic.mjs"><code>demo/test/geodesic.mjs</code></a>) runs the original Euler integration in double precision and compares it with the port's integrator, for rays that start 50 r<sub>s</sub> from the hole and run until they fall in or pass 60 r<sub>s</sub> on the way out:</p>
     <div class="table-wrap">
       <table>
@@ -88,9 +116,11 @@
         </tbody>
       </table>
     </div>
+  </section>
 
-    <h2>Physics limits, stated plainly</h2>
-    <ul>
+  <section id="limits" class="wrap narrow" aria-labelledby="limits-h">
+    <h2 id="limits-h">Physics limits, stated plainly</h2>
+    <ul class="limits">
       <li><strong>The radial equation.</strong> The C++ radial equation ends in <code>r * (dθ² + sin²θ dφ²)</code>. The Schwarzschild Christoffel symbol gives <code>(r − r<sub>s</sub>) * (...)</code>. As written, light bends about a third as much as general relativity predicts: 0.0340 rad against 0.1063 rad with the corrected term at b = 20 r<sub>s</sub> over the same path, and a shadow edge near 1.74 r<sub>s</sub> rather than the analytic 2.60 r<sub>s</sub> (the corrected term gives 2.58 r<sub>s</sub> from this starting distance). The page opens with the corrected term. Untick the checkbox to compare with the equations as written in the C++.</li>
       <li><strong>Kerr mode is not a full Kerr solution.</strong> It keeps the Schwarzschild equations, uses the Kerr formula for the horizon radius, and adds a small Lense-Thirring style term to the azimuthal acceleration about the z axis, while the disk lies in the y = 0 plane. It also makes the disk emission asymmetric. The Kerr metric functions in the GLSL are not used by the integration. With the C++ equations, the shadow changes little with spin: its edge moves from 1.75 r<sub>s</sub> to 1.71 r<sub>s</sub> at a/M = 0.8.</li>
       <li><strong>The Doppler term is nearly invisible.</strong> It is ported as written. Its velocity works out near β ≈ 10<sup>−5</sup>, and it follows a fixed world direction rather than the viewer, so toggling it shows almost no change.</li>
@@ -100,8 +130,15 @@
 
     <h2>Credits</h2>
     <p>This project builds on <a href="https://github.com/kavan010/black_hole">kavan010/black_hole</a>. Its README also acknowledges <a href="https://github.com/rossning92/Blackhole">rossning92/Blackhole</a> and the <a href="https://20k.github.io/c++/2024/05/31/schwarzschild.html">20k Schwarzschild tutorial</a>.</p>
-  </div>
+  </section>
 </main>
+
+<footer class="foot">
+  <div class="wrap foot-inner">
+    <p>Built by Timothy Ojebiyi as a portfolio demo.</p>
+    <p class="foot-links"><a href="https://timothyojebiyi.com">Portfolio</a><a href="https://github.com/coderback/blackhole">Source on GitHub</a><a href="https://github.com/coderback/blackhole/tree/live-demo/demo">This WebGL port</a></p>
+  </div>
+</footer>
 
 <script type="module" src="app.js"></script>
 </body>
